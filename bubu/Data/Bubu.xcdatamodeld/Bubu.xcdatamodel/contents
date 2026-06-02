@@ -1,0 +1,85 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<model type="com.apple.IDECoreDataModeler.DataModel" documentVersion="1.0" lastSavedToolsVersion="23012" systemVersion="24E101" minimumToolsVersion="Automatic" sourceLanguage="Swift">
+    <entity name="CDPlace" representedClassName="CDPlace" codegenType="Manual/None">
+        <attribute name="address" optional="YES" attributeType="String"/>
+        <attribute name="categoryName" optional="YES" attributeType="String"/>
+        <attribute name="coverImageURL" optional="YES" attributeType="URI"/>
+        <attribute name="createdAt" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="id" optional="YES" attributeType="UUID" usesScalarValueType="NO"/>
+        <attribute name="latitude" optional="YES" attributeType="Double" defaultValueString="0.0" usesScalarValueType="YES"/>
+        <attribute name="longitude" optional="YES" attributeType="Double" defaultValueString="0.0" usesScalarValueType="YES"/>
+        <attribute name="name" optional="YES" attributeType="String"/>
+        <attribute name="phone" optional="YES" attributeType="String"/>
+        <attribute name="poiID" optional="YES" attributeType="String"/>
+        <attribute name="sourceName" optional="YES" attributeType="String"/>
+        <attribute name="updatedAt" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
+        <relationship name="userPlaces" optional="YES" toMany="YES" deletionRule="Cascade" destinationEntity="CDUserPlace" inverseName="place" inverseEntity="CDUserPlace"/>
+    </entity>
+    <entity name="CDUserPlace" representedClassName="CDUserPlace" codegenType="Manual/None">
+        <attribute name="collectionOrder" optional="YES" attributeType="Integer 32" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="createdAt" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="id" optional="YES" attributeType="UUID" usesScalarValueType="NO"/>
+        <attribute name="isHidden" optional="YES" attributeType="Boolean" defaultValueString="NO" usesScalarValueType="YES"/>
+        <attribute name="mood" optional="YES" attributeType="String"/>
+        <attribute name="rating" optional="YES" attributeType="Integer 16" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="reviewText" optional="YES" attributeType="String"/>
+        <attribute name="sourceTypeValue" optional="YES" attributeType="Integer 16" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="sourceURL" optional="YES" attributeType="URI"/>
+        <attribute name="statusValue" optional="YES" attributeType="Integer 16" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="updatedAt" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="visitDate" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
+        <relationship name="checkIns" optional="YES" toMany="YES" deletionRule="Cascade" destinationEntity="CDCheckIn" inverseName="userPlace" inverseEntity="CDCheckIn"/>
+        <relationship name="folder" optional="YES" maxCount="1" toMany="NO" deletionRule="Nullify" destinationEntity="CDFolder" inverseName="places" inverseEntity="CDFolder"/>
+        <relationship name="media" optional="YES" toMany="YES" deletionRule="Cascade" destinationEntity="CDMedia" inverseName="userPlace" inverseEntity="CDMedia"/>
+        <relationship name="place" optional="YES" maxCount="1" toMany="NO" deletionRule="Nullify" destinationEntity="CDPlace" inverseName="userPlaces" inverseEntity="CDPlace"/>
+        <relationship name="tags" optional="YES" toMany="YES" deletionRule="Nullify" destinationEntity="CDTag" inverseName="userPlaces" inverseEntity="CDTag"/>
+    </entity>
+    <entity name="CDCheckIn" representedClassName="CDCheckIn" codegenType="Manual/None">
+        <attribute name="companions" optional="YES" attributeType="String"/>
+        <attribute name="id" optional="YES" attributeType="UUID" usesScalarValueType="NO"/>
+        <attribute name="mood" optional="YES" attributeType="String"/>
+        <attribute name="note" optional="YES" attributeType="String"/>
+        <attribute name="ratingAtTime" optional="YES" attributeType="Integer 16" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="timestamp" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="visitDate" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="weather" optional="YES" attributeType="String"/>
+        <relationship name="media" optional="YES" toMany="YES" deletionRule="Cascade" destinationEntity="CDMedia" inverseName="checkIn" inverseEntity="CDMedia"/>
+        <relationship name="userPlace" optional="YES" maxCount="1" toMany="NO" deletionRule="Nullify" destinationEntity="CDUserPlace" inverseName="checkIns" inverseEntity="CDUserPlace"/>
+    </entity>
+    <entity name="CDMedia" representedClassName="CDMedia" codegenType="Manual/None">
+        <attribute name="caption" optional="YES" attributeType="String"/>
+        <attribute name="cloudAssetToken" optional="YES" attributeType="String"/>
+        <attribute name="createdAt" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="id" optional="YES" attributeType="UUID" usesScalarValueType="NO"/>
+        <attribute name="localFileURL" optional="YES" attributeType="URI"/>
+        <attribute name="sortOrder" optional="YES" attributeType="Integer 16" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="thumbnailData" optional="YES" attributeType="Binary" allowsExternalBinaryDataStorage="YES"/>
+        <attribute name="typeValue" optional="YES" attributeType="Integer 16" defaultValueString="0" usesScalarValueType="YES"/>
+        <relationship name="checkIn" optional="YES" maxCount="1" toMany="NO" deletionRule="Nullify" destinationEntity="CDCheckIn" inverseName="media" inverseEntity="CDCheckIn"/>
+        <relationship name="userPlace" optional="YES" maxCount="1" toMany="NO" deletionRule="Nullify" destinationEntity="CDUserPlace" inverseName="media" inverseEntity="CDUserPlace"/>
+    </entity>
+    <entity name="CDCategory" representedClassName="CDCategory" codegenType="Manual/None">
+        <attribute name="colorHex" optional="YES" attributeType="String"/>
+        <attribute name="icon" optional="YES" attributeType="String"/>
+        <attribute name="id" optional="YES" attributeType="UUID" usesScalarValueType="NO"/>
+        <attribute name="isSystem" optional="YES" attributeType="Boolean" defaultValueString="NO" usesScalarValueType="YES"/>
+        <attribute name="name" optional="YES" attributeType="String"/>
+        <attribute name="sortOrder" optional="YES" attributeType="Integer 16" defaultValueString="0" usesScalarValueType="YES"/>
+    </entity>
+    <entity name="CDTag" representedClassName="CDTag" codegenType="Manual/None">
+        <attribute name="colorHex" optional="YES" attributeType="String"/>
+        <attribute name="emoji" optional="YES" attributeType="String"/>
+        <attribute name="id" optional="YES" attributeType="UUID" usesScalarValueType="NO"/>
+        <attribute name="name" optional="YES" attributeType="String"/>
+        <relationship name="userPlaces" optional="YES" toMany="YES" deletionRule="Nullify" destinationEntity="CDUserPlace" inverseName="tags" inverseEntity="CDUserPlace"/>
+    </entity>
+    <entity name="CDFolder" representedClassName="CDFolder" codegenType="Manual/None">
+        <attribute name="createdAt" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="icon" optional="YES" attributeType="String"/>
+        <attribute name="id" optional="YES" attributeType="UUID" usesScalarValueType="NO"/>
+        <attribute name="isDefault" optional="YES" attributeType="Boolean" defaultValueString="NO" usesScalarValueType="YES"/>
+        <attribute name="name" optional="YES" attributeType="String"/>
+        <attribute name="sortOrder" optional="YES" attributeType="Integer 16" defaultValueString="0" usesScalarValueType="YES"/>
+        <relationship name="places" optional="YES" toMany="YES" deletionRule="Nullify" destinationEntity="CDUserPlace" inverseName="folder" inverseEntity="CDUserPlace"/>
+    </entity>
+</model>

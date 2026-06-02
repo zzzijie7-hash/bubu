@@ -1,0 +1,25 @@
+# Xcode
+*.xcworkspace
+xcuserdata/
+DerivedData/
+*.xcbkptlist
+
+# CocoaPods
+Pods/
+
+# SPM
+.build/
+
+# Secrets (不要提交 API Key)
+bubu/Resources/Secrets.xcconfig
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+
+# SwiftLint
+*.swiftlint_cache
