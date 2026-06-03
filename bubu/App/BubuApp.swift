@@ -235,29 +235,188 @@ struct AddPlaceSearchSheet: View {
 
     var body: some View {
         NavigationStack {
-            VStack {
-                HStack {
-                    Image(systemName: "magnifyingglass").foregroundStyle(BubuTheme.Text.tertiary)
-                    TextField("搜索地点", text: $query).font(BubuFont.body).foregroundStyle(BubuTheme.Text.ink).onSubmit { doSearch() }
-                }.padding(12).background(BubuTheme.Surface.surface1).clipShape(RoundedRectangle(cornerRadius: BubuRadius.md)).padding(16)
-
-                if isSearching { Spacer(); ProgressView().tint(BubuTheme.Primary.green); Spacer() }
-                else if !results.isEmpty {
-                    List(results) { p in
-                        Button { onSelect(p); dismiss() } label: { SearchResultRow(place: p) }.listRowBackground(BubuTheme.Surface.surface1)
-                    }.listStyle(.plain)
+            VStack(spacing: 0) {
+                // 搜索框常驻顶部
+                HStack(spacing: 10) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 15))
+                        .foregroundStyle(BubuTheme.Text.tertiary)
+                    TextField("搜索地点", text: $query)
+                        .font(BubuFont.body)
+                        .foregroundStyle(BubuTheme.Text.ink)
+                        .onSubmit { doSearch() }
+                    if !query.isEmpty {
+                        Button { query = ""; results = [] } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.system(size: 14))
+                                .foregroundStyle(BubuTheme.Text.tertiary)
+                        }
+                    }
                 }
-            }.background(BubuTheme.Surface.space).navigationTitle("添加地点").navigationBarTitleDisplayMode(.inline)
-                .toolbar { ToolbarItem(placement: .cancellationAction) { Button("取消") { dismiss() } } }
+                .padding(.horizontal, 14).padding(.vertical, 12)
+                .background(BubuTheme.Surface.surface1)
+                .clipShape(RoundedRectangle(cornerRadius: BubuRadius.md))
+                .padding(.horizontal, 16).padding(.top, 16).padding(.bottom, 12)
+
+                Divider().background(BubuTheme.Text.tertiary).padding(.horizontal, 16)
+
+                // 内容区
+                if isSearching {
+                    Spacer()
+                    ProgressView().tint(BubuTheme.Primary.green)
+                    Spacer()
+                } else if !results.isEmpty {
+                    ScrollView {
+                        LazyVStack(spacing: 0) {
+                            ForEach(results) { place in
+                                Button { onSelect(place); dismiss() } label: {
+                                    PlaceSearchRow(place: place)
+                                }
+                                .buttonStyle(.plain)
+                                Divider().background(BubuTheme.Text.tertiary).padding(.leading, 52)
+                            }
+                        }
+                        .padding(.horizontal, 16)
+                    }
+                } else if results.isEmpty && !query.isEmpty {
+                    VStack(spacing: 12) {
+                        Spacer().frame(height: 60)
+                        Image(systemName: "magnifyingglass")
+                            .font(.system(size: 32))
+                            .foregroundStyle(BubuTheme.Text.tertiary)
+                        Text("没有找到「\(query)」")
+                            .font(BubuFont.titleSM)
+                            .foregroundStyle(BubuTheme.Text.secondary)
+                        Text("换个关键词试试")
+                            .font(BubuFont.caption)
+                            .foregroundStyle(BubuTheme.Text.tertiary)
+                        Spacer()
+                    }
+                    .frame(maxWidth: .infinity)
+                } else {
+                    VStack(spacing: 16) {
+                        Spacer().frame(height: 60)
+                        Image(systemName: "sparkles")
+                            .font(.system(size: 36))
+                            .foregroundStyle(BubuTheme.Primary.green.opacity(0.6))
+                        Text("搜一家店，开始记录")
+                            .font(BubuFont.titleSM)
+                            .foregroundStyle(BubuTheme.Text.secondary)
+                        Text("试试搜「火锅」「咖啡」「甜品」")
+                            .font(BubuFont.caption)
+                            .foregroundStyle(BubuTheme.Text.tertiary)
+                        Spacer()
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+            }
+            .background(BubuTheme.Surface.space)
+            .navigationTitle("添加地点")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("取消") { dismiss() } } }
         }
     }
 
     private func doSearch() {
-        guard !query.isEmpty else { return }
+        let q = query.trimmingCharacters(in: .whitespaces)
+        guard !q.isEmpty else { return }
         isSearching = true
+        let center = container.locationManager.currentLocation?.coordinate
+            ?? CLLocationCoordinate2D(latitude: 31.215070, longitude: 121.474434)
         Task {
-            do { results = try await container.mapService.searchPlaces(query: query, region: MapRegion(center: CLLocationCoordinate2D(latitude: 31.215070, longitude: 121.474434), radius: 50000), filters: nil) } catch { results = [] }
+            do {
+                results = try await container.mapService.searchPlaces(
+                    query: q,
+                    region: MapRegion(center: center, radius: 30000),
+                    filters: nil
+                )
+            } catch { results = [] }
             isSearching = false
         }
     }
+}
+
+// MARK: - 搜索结果行（添加面板专用）
+
+struct PlaceSearchRow: View {
+    let place: MapPlace
+
+    var body: some View {
+        HStack(spacing: 12) {
+            // 类别图标
+            Image(systemName: categoryIcon)
+                .font(.system(size: 15))
+                .foregroundStyle(categoryColor)
+                .frame(width: 28, height: 28)
+                .background(categoryColor.opacity(0.12))
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+
+            // 名称 + 地址
+            VStack(alignment: .leading, spacing: 4) {
+                Text(place.name)
+                    .font(BubuFont.titleSM)
+                    .foregroundStyle(BubuTheme.Text.ink)
+                    .lineLimit(1)
+                if let addr = place.address {
+                    Text(addr)
+                        .font(.system(size: 11))
+                        .foregroundStyle(BubuTheme.Text.tertiary)
+                        .lineLimit(1)
+                }
+            }
+
+            Spacer()
+
+            // 高德评分 + 距离
+            VStack(alignment: .trailing, spacing: 3) {
+                if let rating = place.rating {
+                    HStack(spacing: 3) {
+                        Text(String(format: "%.1f", rating))
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(BubuTheme.Semantic.visitedNeutral)
+                        Image(systemName: "star.fill")
+                            .font(.system(size: 9))
+                            .foregroundStyle(BubuTheme.Semantic.visitedNeutral)
+                    }
+                }
+                if let dist = place.distance {
+                    Text(formatDistance(dist))
+                        .font(.system(size: 11))
+                        .foregroundStyle(BubuTheme.Text.tertiary)
+                }
+            }
+        }
+        .padding(.vertical, 14)
+    }
+
+    private var categoryIcon: String {
+        guard let cat = place.category else { return "mappin" }
+        if cat.contains("餐饮") || cat.contains("餐厅") { return "fork.knife" }
+        if cat.contains("咖啡") || cat.contains("茶") { return "cup.and.saucer.fill" }
+        if cat.contains("酒吧") { return "wineglass.fill" }
+        if cat.contains("购物") { return "bag.fill" }
+        if cat.contains("公园") { return "leaf.fill" }
+        if cat.contains("景点") || cat.contains("风景") { return "mountain.2.fill" }
+        if cat.contains("博物馆") || cat.contains("展览") { return "building.columns.fill" }
+        if cat.contains("住宿") || cat.contains("酒店") { return "bed.double.fill" }
+        if cat.contains("娱乐") { return "sparkles" }
+        if cat.contains("运动") { return "figure.run" }
+        return "mappin"
+    }
+    private var categoryColor: Color {
+        guard let cat = place.category else { return BubuTheme.Text.tertiary }
+        if cat.contains("餐饮") || cat.contains("餐厅") { return .orange }
+        if cat.contains("咖啡") || cat.contains("茶") { return .brown }
+        if cat.contains("酒吧") { return .purple }
+        if cat.contains("购物") { return .blue }
+        if cat.contains("公园") { return .mint }
+        if cat.contains("景点") { return .green }
+        return BubuTheme.Primary.green
+    }
+}
+
+private func formatDistance(_ meters: Double) -> String {
+    if meters < 1000 { return "\(Int(meters))m" }
+    let km = meters / 1000
+    return String(format: "%.1fkm", km)
 }

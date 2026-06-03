@@ -22,7 +22,9 @@ final class AppleMapService: MapServiceProtocol {
                 poiID: nil,
                 category: item.pointOfInterestCategory.flatMap { catType($0) },
                 phone: item.phoneNumber,
-                coverImageURL: nil
+                coverImageURL: nil,
+                rating: nil,
+                distance: nil
             )
         }
     }
@@ -55,7 +57,9 @@ final class AppleMapService: MapServiceProtocol {
                 poiID: nil,
                 category: item.pointOfInterestCategory.flatMap { catType($0) },
                 phone: item.phoneNumber,
-                coverImageURL: nil
+                coverImageURL: nil,
+                rating: nil,
+                distance: nil
             )
         }
     }

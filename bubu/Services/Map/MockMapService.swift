@@ -17,7 +17,9 @@ final class MockMapService: MapServiceProtocol {
                 poiID: "B000A1",
                 category: "餐饮",
                 phone: "010-12345678",
-                coverImageURL: nil
+                coverImageURL: nil,
+                rating: 4.3,
+                distance: 350
             ),
             MapPlace(
                 id: "mock_2",
@@ -27,7 +29,9 @@ final class MockMapService: MapServiceProtocol {
                 poiID: "B000A2",
                 category: "咖啡",
                 phone: nil,
-                coverImageURL: nil
+                coverImageURL: nil,
+                rating: 4.7,
+                distance: 1200
             )
         ]
     }
@@ -48,7 +52,9 @@ final class MockMapService: MapServiceProtocol {
                 poiID: poiID,
                 category: "餐饮",
                 phone: nil,
-                coverImageURL: nil
+                coverImageURL: nil,
+                rating: 4.5,
+                distance: nil
             ),
             rating: 4.5,
             openingHours: "10:00-22:00",

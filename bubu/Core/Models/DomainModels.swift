@@ -95,6 +95,8 @@ struct MapPlace: Identifiable, Hashable {
     let category: String?
     let phone: String?
     let coverImageURL: URL?
+    let rating: Double?
+    let distance: Double?  // 米
 
     func hash(into hasher: inout Hasher) {
         hasher.combine(id)

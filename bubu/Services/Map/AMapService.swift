@@ -11,17 +11,18 @@ final class AMapService: MapServiceProtocol {
         self.apiKey = apiKey
     }
 
-    // MARK: - 地点搜索（关键词）
+    // MARK: - 地点搜索
 
     func searchPlaces(query: String, region: MapRegion, filters: [PlaceCategoryType]?) async throws -> [MapPlace] {
-        var components = URLComponents(string: "\(baseURL)/place/text")!
+        let location = "\(region.center.longitude),\(region.center.latitude)"
+        var components = URLComponents(string: "\(baseURL)/place/around")!
         components.queryItems = [
             URLQueryItem(name: "key", value: apiKey),
             URLQueryItem(name: "keywords", value: query),
-            URLQueryItem(name: "city", value: "上海"),
-            URLQueryItem(name: "citylimit", value: "true"),
+            URLQueryItem(name: "location", value: location),
+            URLQueryItem(name: "radius", value: "\(Int(region.radius))"),
             URLQueryItem(name: "offset", value: "25"),
-            URLQueryItem(name: "page", value: "1"),
+            URLQueryItem(name: "sortrule", value: "distance"),
             URLQueryItem(name: "extensions", value: "all")
         ]
         if let code = filters?.first?.amapPOICode {
@@ -30,8 +31,15 @@ final class AMapService: MapServiceProtocol {
 
         guard let url = components.url else { throw AMapError.invalidURL }
         let (data, _) = try await URLSession.shared.data(from: url)
-        let response = try JSONDecoder().decode(AMapSearchResponse.self, from: data)
-        return response.pois.map { $0.toDomain() }
+        let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
+        let pois = (obj["pois"] as? [[String: Any]]) ?? []
+
+        let places: [MapPlace] = pois.compactMap(parsePOI)
+        return places.sorted { a, b in
+            let ra = a.rating ?? 0, rb = b.rating ?? 0
+            if ra != rb { return ra > rb }
+            return (a.distance ?? 99999) < (b.distance ?? 99999)
+        }
     }
 
     // MARK: - 周边搜索
@@ -51,8 +59,9 @@ final class AMapService: MapServiceProtocol {
 
         guard let url = components.url else { throw AMapError.invalidURL }
         let (data, _) = try await URLSession.shared.data(from: url)
-        let response = try JSONDecoder().decode(AMapSearchResponse.self, from: data)
-        return response.pois.map { $0.toDomain() }
+        let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
+        let pois = (obj["pois"] as? [[String: Any]]) ?? []
+        return pois.compactMap(parsePOI)
     }
 
     // MARK: - 逆地理编码
@@ -62,13 +71,23 @@ final class AMapService: MapServiceProtocol {
         components.queryItems = [
             URLQueryItem(name: "key", value: apiKey),
             URLQueryItem(name: "location", value: "\(coordinate.longitude),\(coordinate.latitude)"),
-            URLQueryItem(name: "extensions", value: "base")
+            URLQueryItem(name: "extensions", value: "all"),
+            URLQueryItem(name: "radius", value: "200"),
+            URLQueryItem(name: "poitype", value: "餐饮服务|购物服务|生活服务|体育休闲服务|医疗保健服务|住宿服务|风景名胜|商务住宅|科教文化服务|交通设施服务|金融保险服务|公司企业|道路附属设施|地名地址信息|公共设施")
         ]
 
         guard let url = components.url else { throw AMapError.invalidURL }
         let (data, _) = try await URLSession.shared.data(from: url)
-        let response = try JSONDecoder().decode(AMapRegeoResponse.self, from: data)
-        return response.regeocode.formattedAddress
+        let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
+        let regeocode = obj["regeocode"] as? [String: Any] ?? [:]
+
+        if let pois = regeocode["pois"] as? [[String: Any]], let name = pois.first?["name"] as? String, !name.isEmpty {
+            return name
+        }
+        if let aois = regeocode["aois"] as? [[String: Any]], let name = aois.first?["name"] as? String, !name.isEmpty {
+            return name
+        }
+        return regeocode["formatted_address"] as? String ?? "未知位置"
     }
 
     // MARK: - POI 详情
@@ -82,16 +101,28 @@ final class AMapService: MapServiceProtocol {
 
         guard let url = components.url else { throw AMapError.invalidURL }
         let (data, _) = try await URLSession.shared.data(from: url)
-        let response = try JSONDecoder().decode(AMapDetailResponse.self, from: data)
+        let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
+        guard let pois = obj["pois"] as? [[String: Any]], let poi = pois.first,
+              let place = parsePOI(poi) else { throw AMapError.poiNotFound }
 
-        guard let detail = response.pois.first else { throw AMapError.poiNotFound }
+        var rating: Double?
+        if let bizExt = poi["biz_ext"] as? [String: Any], let r = bizExt["rating"] as? String {
+            rating = Double(r)
+        } else if let r = poi["rating"] as? String {
+            rating = Double(r)
+        }
+
+        let openingHours = (poi["biz_ext"] as? [String: Any])?["opentime2"] as? String
+        let cost = (poi["biz_ext"] as? [String: Any])?["cost"] as? String
+        let photoDicts = poi["photos"] as? [[String: Any]] ?? []
+        let photoURLs = photoDicts.compactMap { ($0["url"] as? String).flatMap(URL.init) }
 
         return MapPlaceDetail(
-            place: detail.toDomain(),
-            rating: detail.ratingValue,
-            openingHours: detail.openingHours,
-            priceRange: detail.priceRange,
-            photos: (detail.photos ?? []).compactMap { URL(string: $0.url) },
+            place: place,
+            rating: rating,
+            openingHours: openingHours,
+            priceRange: cost,
+            photos: photoURLs,
             description: nil
         )
     }
@@ -108,117 +139,58 @@ final class AMapService: MapServiceProtocol {
 
         guard let url = components.url else { throw AMapError.invalidURL }
         let (data, _) = try await URLSession.shared.data(from: url)
-        let response = try JSONDecoder().decode(AMapRouteResponse.self, from: data)
-        guard let path = response.route.paths.first else { throw AMapError.routeNotFound }
+        let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
+        guard let route = obj["route"] as? [String: Any],
+              let paths = route["paths"] as? [[String: Any]],
+              let path = paths.first else { throw AMapError.routeNotFound }
 
         return MapRoute(
-            distance: Double(path.distance) ?? 0,
-            duration: Double(path.duration) ?? 0,
-            polyline: decodePolyline(path.polyline)
+            distance: Double(path["distance"] as? String ?? "0") ?? 0,
+            duration: Double(path["duration"] as? String ?? "0") ?? 0,
+            polyline: []
         )
     }
 
-    private func decodePolyline(_ encoded: String) -> [CLLocationCoordinate2D] {
-        // 高德 polyline 编码算法
-        var result: [CLLocationCoordinate2D] = []
-        // 简化实现 — 后续补全
-        return result
-    }
-}
+    // MARK: - 单条 POI 解析（安全：坏记录跳过）
 
-// MARK: - 高德 API 响应模型
+    private func parsePOI(_ poi: [String: Any]) -> MapPlace? {
+        guard let id = poi["id"] as? String,
+              let name = poi["name"] as? String,
+              let location = poi["location"] as? String else { return nil }
 
-private struct AMapSearchResponse: Decodable {
-    let pois: [AMapPOI]
-    let count: String
-}
-
-private struct AMapRegeoResponse: Decodable {
-    let regeocode: AMapRegeoCode
-
-    struct AMapRegeoCode: Decodable {
-        let formattedAddress: String
-        enum CodingKeys: String, CodingKey {
-            case formattedAddress = "formatted_address"
-        }
-    }
-}
-
-private struct AMapDetailResponse: Decodable {
-    let pois: [AMapPOI]
-}
-
-private struct AMapPOI: Decodable {
-    let id: String
-    let name: String
-    let address: String
-    let location: String
-    let pname: String?
-    let cityname: String?
-    let adname: String?
-    let type: String?
-    let typecode: String?
-    let tel: String?
-    let photos: [AMapPhoto]?
-    let bizExt: AMapBizExt?
-    let deepInfo: AMapDeepInfo?
-    let rating: String?
-
-    struct AMapPhoto: Decodable {
-        let url: String
-    }
-
-    struct AMapBizExt: Decodable {
-        let rating: String?
-        let cost: CostValue?
-        let opentime2: String?
-
-        enum CostValue: Decodable {
-            case string(String)
-            case array([String])
-
-            init(from decoder: Decoder) throws {
-                let container = try decoder.singleValueContainer()
-                if let str = try? container.decode(String.self) { self = .string(str) }
-                else if let arr = try? container.decode([String].self) { self = .array(arr) }
-                else { self = .string("") }
-            }
-
-            var value: String? {
-                switch self {
-                case .string(let s): return s.isEmpty ? nil : s
-                case .array(let a): return a.first
-                }
-            }
-        }
-    }
-
-    struct AMapDeepInfo: Decodable {
-        let opentime: String?
-    }
-
-    var ratingValue: Double? {
-        bizExt?.rating.flatMap(Double.init) ?? rating.flatMap(Double.init)
-    }
-
-    var openingHours: String? { bizExt?.opentime2 }
-    var priceRange: String? { bizExt?.cost?.value }
-
-    func toDomain() -> MapPlace {
         let coords = location.split(separator: ",")
         let lon = Double(coords.first ?? "") ?? 0
         let lat = Double(coords.last ?? "") ?? 0
+
+        let address = poi["address"] as? String
+        let tel = poi["tel"] as? String
+        let typecode = poi["typecode"] as? String
         let category = mapTypeCode(typecode)
+
+        // distance: around API 返回字符串 "1141"，text API 返回 []
+        let distString = poi["distance"] as? String
+        let distance = distString.flatMap(Double.init)
+
+        // rating: biz_ext.rating 作为字符串
+        let bizExt = poi["biz_ext"] as? [String: Any]
+        let ratingStr = bizExt?["rating"] as? String ?? poi["rating"] as? String
+        let rating = ratingStr.flatMap(Double.init)
+
+        // 封面图
+        let photos = poi["photos"] as? [[String: Any]]
+        let coverImageURL = photos?.first?["url"] as? String
 
         return MapPlace(
             id: id,
             name: name,
-            address: address.isEmpty ? nil : address,
+            address: (address?.isEmpty == false) ? address : nil,
             coordinate: CLLocationCoordinate2D(latitude: lat, longitude: lon),
             poiID: id,
             category: category,
-            phone: tel?.isEmpty == false ? tel : nil,
-            coverImageURL: photos?.first.flatMap { URL(string: $0.url) }
+            phone: (tel?.isEmpty == false) ? tel : nil,
+            coverImageURL: coverImageURL.flatMap(URL.init),
+            rating: rating,
+            distance: distance
         )
     }
 
@@ -235,20 +207,6 @@ private struct AMapPOI: Decodable {
         case "19": return "地标"
         default: return nil
         }
-    }
-}
-
-private struct AMapRouteResponse: Decodable {
-    let route: AMapRoute
-
-    struct AMapRoute: Decodable {
-        let paths: [AMapPath]
-    }
-
-    struct AMapPath: Decodable {
-        let distance: String
-        let duration: String
-        let polyline: String
     }
 }
 

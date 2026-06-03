@@ -46,13 +46,13 @@ struct ExploreMapView: View {
                 }
 
                 ForEach(nearbyPlaces) { place in
-                    Marker(place.name, systemImage: "fork.knife", coordinate: place.coordinate)
+                    Marker(place.name, systemImage: categoryMarkerIcon(for: place.category), coordinate: place.coordinate)
                         .tint(BubuTheme.Primary.green.opacity(0.5))
                         .tag("nearby_\(place.id)")
                 }
 
                 ForEach(searchResults) { place in
-                    Marker(place.name, systemImage: "mappin", coordinate: place.coordinate)
+                    Marker(place.name, systemImage: categoryMarkerIcon(for: place.category), coordinate: place.coordinate)
                         .tint(BubuTheme.Primary.green)
                         .tag("search_\(place.id)")
                 }
@@ -192,6 +192,22 @@ struct ExploreMapView: View {
 
     private func reloadUserPlaces() { userPlaces = container.placeRepository.fetchUserPlaces() }
 
+    private func categoryMarkerIcon(for category: String?) -> String {
+        guard let cat = category else { return "mappin" }
+        if cat.contains("餐饮") || cat.contains("餐厅") { return "fork.knife" }
+        if cat.contains("咖啡") || cat.contains("茶") { return "cup.and.saucer.fill" }
+        if cat.contains("酒吧") { return "wineglass.fill" }
+        if cat.contains("购物") { return "bag.fill" }
+        if cat.contains("公园") { return "leaf.fill" }
+        if cat.contains("景点") || cat.contains("风景") { return "mountain.2.fill" }
+        if cat.contains("博物馆") || cat.contains("展览") { return "building.columns.fill" }
+        if cat.contains("住宿") || cat.contains("酒店") { return "bed.double.fill" }
+        if cat.contains("娱乐") { return "sparkles" }
+        if cat.contains("运动") { return "figure.run" }
+        if cat.contains("甜品") || cat.contains("糕点") { return "birthday.cake" }
+        return "mappin"
+    }
+
     private func loadNearby() {
         if let loc = container.locationManager.currentLocation { searchAtLocation(loc.coordinate) }
     }
@@ -223,7 +239,7 @@ struct ExploreMapView: View {
             let id = String(tagID.dropFirst(5))
             if let up = userPlaces.first(where: { $0.place?.id?.uuidString == id }), let p = up.place {
                 let c = CLLocationCoordinate2D(latitude: p.latitude, longitude: p.longitude)
-                return (c, MapPlace(id: p.id?.uuidString ?? "", name: p.name ?? "", address: p.address, coordinate: c, poiID: p.poiID, category: p.categoryName, phone: p.phone, coverImageURL: p.coverImageURL))
+                return (c, MapPlace(id: p.id?.uuidString ?? "", name: p.name ?? "", address: p.address, coordinate: c, poiID: p.poiID, category: p.categoryName, phone: p.phone, coverImageURL: p.coverImageURL, rating: nil, distance: nil))
             }
         }
         return (nil, nil)
