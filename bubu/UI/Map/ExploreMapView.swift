@@ -9,23 +9,39 @@ struct ExploreMapView: View {
     @EnvironmentObject var appState: AppState
     @State private var camera: MapCameraPosition = .automatic
     @State private var showingFilter = false
-    @State private var showingSearchResults = false
     @State private var filter = PlaceFilter()
     @State private var searchResults: [MapPlace] = []
     @State private var selectedPlace: MapPlace?
     @State private var nearbyPlaces: [MapPlace] = []
-    @State private var userPlaces: [CDUserPlace] = []
+    @State private var allUserPlaces: [CDUserPlace] = []
+    @State private var selectedUserPlace: CDUserPlace?
     @State private var selectedAnnotationID: String?
     @State private var currentAddress = "SOHO复兴广场"
     @State private var showingAddressPicker = false
     @State private var savedAddresses = SavedAddress.load()
     @State private var addressSearchHistory: [String] = []
     @State private var pendingPlace: MapPlace?
+    @State private var currentZoomLevel: Double = 1000  // 当前缩放级别（米）
+
+    /// 筛选后的用户标记
+    private var filteredUserPlaces: [CDUserPlace] {
+        allUserPlaces.filter { up in
+            let status = PlaceStatus(rawValue: up.statusValue) ?? .wantToGo
+            if filter.hideDisliked && status == .visitedBad { return false }
+            if !filter.statuses.isEmpty && !filter.statuses.contains(status) { return false }
+            if let catName = up.place?.categoryName, !filter.categories.isEmpty {
+                let matchesCategory = filter.categories.contains { cat in cat.rawValue == catName }
+                if !matchesCategory { return false }
+            }
+            return true
+        }
+    }
 
     var body: some View {
         ZStack {
             // 全屏地图
             Map(position: $camera, interactionModes: .all, selection: $selectedAnnotationID) {
+                // 当前位置
                 if let loc = container.locationManager.currentLocation {
                     Annotation("", coordinate: loc.coordinate) {
                         ZStack {
@@ -36,13 +52,16 @@ struct ExploreMapView: View {
                     }
                 }
 
-                ForEach(userPlaces, id: \.id) { up in
+                // 用户标记（筛选后）
+                ForEach(filteredUserPlaces, id: \.id) { up in
                     let p = up.place
                     let coord = CLLocationCoordinate2D(latitude: p?.latitude ?? 0, longitude: p?.longitude ?? 0)
                     let status = PlaceStatus(rawValue: up.statusValue) ?? .wantToGo
-                    Marker(p?.name ?? "地点", systemImage: status == .wantToGo ? "bookmark.fill" : "mappin.circle.fill", coordinate: coord)
-                        .tint(BubuTheme.mapMarkerColor(for: status))
-                        .tag("user_\(p?.id?.uuidString ?? "")")
+                    let color = BubuTheme.mapMarkerColor(for: status)
+                    Annotation("", coordinate: coord) {
+                        UserPlaceMarker(status: status, color: color, name: p?.name ?? "")
+                    }
+                    .tag("user_\(p?.id?.uuidString ?? "")")
                 }
 
                 ForEach(nearbyPlaces) { place in
@@ -61,6 +80,18 @@ struct ExploreMapView: View {
             .mapControls { MapCompass() }
             .onChange(of: selectedAnnotationID) { _, tagID in
                 guard let tagID, !tagID.isEmpty else { return }
+                if tagID.hasPrefix("user_") {
+                    let id = String(tagID.dropFirst(5))
+                    if let up = allUserPlaces.first(where: { $0.place?.id?.uuidString == id }),
+                       let p = up.place {
+                        let c = CLLocationCoordinate2D(latitude: p.latitude, longitude: p.longitude)
+                        withAnimation(.easeInOut(duration: 0.4)) {
+                            camera = .region(MKCoordinateRegion(center: c, latitudinalMeters: 500, longitudinalMeters: 500))
+                        }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { selectedUserPlace = up }
+                    }
+                    return
+                }
                 let (coord, place) = lookupAnnotation(tagID)
                 guard let coord, let place else { return }
                 withAnimation(.easeInOut(duration: 0.4)) {
@@ -72,7 +103,6 @@ struct ExploreMapView: View {
             // 顶部浮层：地址胶囊 + 筛选
             VStack(spacing: 0) {
                 HStack(spacing: 8) {
-                    // 地址胶囊（点击切换位置）
                     Button { showingAddressPicker = true } label: {
                         HStack(spacing: 4) {
                             Image(systemName: "location.fill")
@@ -91,7 +121,6 @@ struct ExploreMapView: View {
                         .clipShape(Capsule())
                     }
 
-                    // 定位按钮
                     Button { goToMyLocation() } label: {
                         Image(systemName: "location.north.line.fill")
                             .font(.system(size: 14))
@@ -103,7 +132,27 @@ struct ExploreMapView: View {
 
                     Spacer()
 
-                    // 筛选按钮
+                    // 缩放按钮
+                    VStack(spacing: 1) {
+                        Button { zoomIn() } label: {
+                            Image(systemName: "plus")
+                                .font(.system(size: 14, weight: .medium))
+                                .foregroundStyle(BubuTheme.Text.ink)
+                                .frame(width: 34, height: 34)
+                                .background(.ultraThinMaterial)
+                                .clipShape(RoundedRectangle(cornerRadius: 8))
+                        }
+                        Divider().frame(width: 22)
+                        Button { zoomOut() } label: {
+                            Image(systemName: "minus")
+                                .font(.system(size: 14, weight: .medium))
+                                .foregroundStyle(BubuTheme.Text.ink)
+                                .frame(width: 34, height: 34)
+                                .background(.ultraThinMaterial)
+                                .clipShape(RoundedRectangle(cornerRadius: 8))
+                        }
+                    }
+
                     Button { showingFilter.toggle() } label: {
                         Image(systemName: "line.3.horizontal.decrease")
                             .font(.system(size: 14, weight: .medium))
@@ -114,9 +163,8 @@ struct ExploreMapView: View {
                     }
                 }
                 .padding(.horizontal, 16)
-                .padding(.top, 54)  // 避开灵动岛 + 状态栏
+                .padding(.top, 54)
 
-                // 筛选标签条
                 if !filter.isEmpty {
                     FilterChipBar(filter: $filter)
                         .padding(.horizontal, 16).padding(.top, 8)
@@ -134,7 +182,7 @@ struct ExploreMapView: View {
         }
         .onChange(of: container.locationManager.currentLocation) { _, newLoc in
             guard let loc = newLoc else { return }
-            withAnimation { camera = .region(MKCoordinateRegion(center: loc.coordinate, latitudinalMeters: 1000, longitudinalMeters: 1000)) }
+            zoomTo(center: loc.coordinate, meters: 1000)
             reverseGeocodeCurrent()
         }
         .onChange(of: appState.pendingSearchPlace) { _, place in
@@ -146,18 +194,11 @@ struct ExploreMapView: View {
             guard let place else { return }
             searchResults = [place]
             withAnimation { camera = .region(MKCoordinateRegion(center: place.coordinate, latitudinalMeters: 1000, longitudinalMeters: 1000)) }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                selectedPlace = place
-            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { selectedPlace = place }
         }
         .sheet(isPresented: $showingFilter) { FilterPanelView(filter: $filter) }
         .sheet(item: $selectedPlace) { place in PlaceDetailSheet(place: place) }
-        .sheet(isPresented: $showingSearchResults) {
-            SearchResultsSheet(results: $searchResults) { place in
-                showingSearchResults = false
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { selectedPlace = place }
-            }
-        }
+        .sheet(item: $selectedUserPlace) { up in UserPlaceDetailSheet(userPlace: up) }
         .sheet(isPresented: $showingAddressPicker) {
             AddressSearchView(
                 currentAddress: $currentAddress, savedAddresses: $savedAddresses,
@@ -177,9 +218,38 @@ struct ExploreMapView: View {
 
     private func goToMyLocation() {
         if let loc = container.locationManager.currentLocation {
-            withAnimation { camera = .region(MKCoordinateRegion(center: loc.coordinate, latitudinalMeters: 1000, longitudinalMeters: 1000)) }
+            zoomTo(center: loc.coordinate, meters: 1000)
             reverseGeocodeCurrent()
         }
+    }
+
+    private func zoomIn() {
+        currentZoomLevel = max(100, currentZoomLevel / 2)
+        zoomToCurrent()
+    }
+
+    private func zoomOut() {
+        currentZoomLevel = min(50000, currentZoomLevel * 2)
+        zoomToCurrent()
+    }
+
+    private func zoomToCurrent() {
+        let center = lookupCurrentCenter()
+        withAnimation(.easeInOut(duration: 0.3)) {
+            camera = .region(MKCoordinateRegion(center: center, latitudinalMeters: currentZoomLevel, longitudinalMeters: currentZoomLevel))
+        }
+    }
+
+    private func zoomTo(center: CLLocationCoordinate2D, meters: Double) {
+        currentZoomLevel = meters
+        withAnimation(.easeInOut(duration: 0.3)) {
+            camera = .region(MKCoordinateRegion(center: center, latitudinalMeters: meters, longitudinalMeters: meters))
+        }
+    }
+
+    private func lookupCurrentCenter() -> CLLocationCoordinate2D {
+        return container.locationManager.currentLocation?.coordinate
+            ?? CLLocationCoordinate2D(latitude: 31.215070, longitude: 121.474434)
     }
 
     private func reverseGeocodeCurrent() {
@@ -190,7 +260,7 @@ struct ExploreMapView: View {
         }
     }
 
-    private func reloadUserPlaces() { userPlaces = container.placeRepository.fetchUserPlaces() }
+    private func reloadUserPlaces() { allUserPlaces = container.placeRepository.fetchUserPlaces() }
 
     private func categoryMarkerIcon(for category: String?) -> String {
         guard let cat = category else { return "mappin" }
@@ -235,18 +305,191 @@ struct ExploreMapView: View {
             let id = String(tagID.dropFirst(7))
             if let p = nearbyPlaces.first(where: { $0.id == id }) { return (p.coordinate, p) }
         }
-        if tagID.hasPrefix("user_") {
-            let id = String(tagID.dropFirst(5))
-            if let up = userPlaces.first(where: { $0.place?.id?.uuidString == id }), let p = up.place {
-                let c = CLLocationCoordinate2D(latitude: p.latitude, longitude: p.longitude)
-                return (c, MapPlace(id: p.id?.uuidString ?? "", name: p.name ?? "", address: p.address, coordinate: c, poiID: p.poiID, category: p.categoryName, phone: p.phone, coverImageURL: p.coverImageURL, rating: nil, distance: nil))
-            }
-        }
         return (nil, nil)
     }
 }
 
-// MARK: - 地点详情 Sheet（含打卡表单）
+// MARK: - 用户地点标记
+
+struct UserPlaceMarker: View {
+    let status: PlaceStatus
+    let color: Color
+    let name: String
+
+    var body: some View {
+        VStack(spacing: 2) {
+            ZStack {
+                Circle()
+                    .fill(color.opacity(0.25))
+                    .frame(width: 32, height: 32)
+                Image(systemName: statusIcon)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(color)
+            }
+            Text(name)
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(.white)
+                .padding(.horizontal, 6).padding(.vertical, 2)
+                .background(.ultraThinMaterial)
+                .clipShape(RoundedRectangle(cornerRadius: 4))
+        }
+    }
+
+    private var statusIcon: String {
+        switch status {
+        case .wantToGo: return "bookmark.fill"
+        case .visitedGood: return "hand.thumbsup.fill"
+        case .visitedBad: return "hand.thumbsdown.fill"
+        case .visitedNeutral: return "checkmark.circle.fill"
+        }
+    }
+}
+
+// MARK: - 用户地点详情 Sheet（已有收藏的）
+
+struct UserPlaceDetailSheet: View {
+    let userPlace: CDUserPlace
+    @EnvironmentObject var container: AppContainer
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        let status = PlaceStatus(rawValue: userPlace.statusValue) ?? .wantToGo
+        let place = userPlace.place
+        let checkIns = (userPlace.checkIns?.sorted { ($0.timestamp ?? .distantPast) > ($1.timestamp ?? .distantPast) } ?? [])
+
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    // 状态标签
+                    HStack {
+                        Image(systemName: status.iconName)
+                            .foregroundStyle(BubuTheme.colorForStatus(status))
+                        Text(status.displayName)
+                            .font(BubuFont.titleSM)
+                            .foregroundStyle(BubuTheme.colorForStatus(status))
+                        Spacer()
+                    }
+                    .padding(12)
+                    .background(BubuTheme.colorForStatus(status).opacity(0.12))
+                    .clipShape(RoundedRectangle(cornerRadius: BubuRadius.md))
+
+                    // 地点信息
+                    Text(place?.name ?? "未知地点")
+                        .font(BubuFont.titleXL)
+                        .foregroundStyle(BubuTheme.Text.ink)
+                    if let addr = place?.address {
+                        Label(addr, systemImage: "location.fill")
+                            .font(BubuFont.body)
+                            .foregroundStyle(BubuTheme.Text.secondary)
+                    }
+
+                    Divider().background(BubuTheme.Text.tertiary)
+
+                    // 打卡记录
+                    if !checkIns.isEmpty {
+                        Text("打卡记录").font(BubuFont.titleLG).foregroundStyle(BubuTheme.Text.ink)
+                        ForEach(checkIns, id: \.id) { checkIn in
+                            CheckInRowView(checkIn: checkIn)
+                        }
+                    } else if status != .wantToGo {
+                        HStack(spacing: 8) {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .foregroundStyle(BubuTheme.Semantic.visitedNeutral)
+                            Text("还没有打卡记录")
+                                .font(BubuFont.titleSM)
+                                .foregroundStyle(BubuTheme.Text.secondary)
+                        }
+                        .padding(16)
+                        .frame(maxWidth: .infinity)
+                        .background(BubuTheme.Surface.surface1)
+                        .clipShape(RoundedRectangle(cornerRadius: BubuRadius.md))
+                    }
+
+                    // 评分/心情（如果有）
+                    if userPlace.rating > 0 {
+                        HStack {
+                            Text("评分").font(BubuFont.titleSM).foregroundStyle(BubuTheme.Text.secondary)
+                            ForEach(1...5, id: \.self) { i in
+                                Image(systemName: i <= userPlace.rating ? "star.fill" : "star")
+                                    .font(.caption)
+                                    .foregroundStyle(i <= userPlace.rating ? BubuTheme.Semantic.visitedNeutral : BubuTheme.Text.tertiary)
+                            }
+                        }
+                    }
+                    if let mood = userPlace.mood {
+                        HStack {
+                            Text("心情").font(BubuFont.titleSM).foregroundStyle(BubuTheme.Text.secondary)
+                            Text(mood).font(BubuFont.body).foregroundStyle(BubuTheme.Text.ink)
+                        }
+                    }
+                    if let review = userPlace.reviewText, !review.isEmpty {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("笔记").font(BubuFont.titleSM).foregroundStyle(BubuTheme.Text.secondary)
+                            Text(review).font(BubuFont.body).foregroundStyle(BubuTheme.Text.ink)
+                        }
+                    }
+                    if let visitDate = userPlace.visitDate {
+                        HStack {
+                            Text("到访").font(BubuFont.titleSM).foregroundStyle(BubuTheme.Text.secondary)
+                            Text(visitDate.formatted(date: .long, time: .omitted))
+                                .font(BubuFont.body).foregroundStyle(BubuTheme.Text.ink)
+                        }
+                    }
+
+                    Spacer()
+                }
+                .padding(20)
+            }
+            .background(BubuTheme.Surface.space)
+            .navigationTitle("地点详情")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("关闭") { dismiss() } } }
+        }
+    }
+}
+
+struct CheckInRowView: View {
+    let checkIn: CDCheckIn
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                if let mood = checkIn.mood {
+                    Text(moodEmoji(mood))
+                        .font(.title3)
+                }
+                HStack(spacing: 4) {
+                    ForEach(1...5, id: \.self) { i in
+                        Image(systemName: i <= checkIn.ratingAtTime ? "star.fill" : "star")
+                            .font(.system(size: 10))
+                            .foregroundStyle(i <= checkIn.ratingAtTime ? BubuTheme.Semantic.visitedNeutral : BubuTheme.Text.tertiary)
+                    }
+                }
+                Spacer()
+                if let ts = checkIn.timestamp {
+                    Text(ts.formatted(date: .abbreviated, time: .shortened))
+                        .font(.system(size: 11))
+                        .foregroundStyle(BubuTheme.Text.tertiary)
+                }
+            }
+            if let note = checkIn.note, !note.isEmpty {
+                Text(note)
+                    .font(BubuFont.caption)
+                    .foregroundStyle(BubuTheme.Text.secondary)
+                    .lineLimit(3)
+            }
+        }
+        .padding(14)
+        .background(BubuTheme.Surface.surface1)
+        .clipShape(RoundedRectangle(cornerRadius: BubuRadius.md))
+    }
+
+    private func moodEmoji(_ mood: String) -> String {
+        MoodTag.allCases.first(where: { $0.rawValue == mood })?.emoji ?? "📝"
+    }
+}
+
+// MARK: - 地点详情 Sheet（搜索结果的，保存前）
 
 struct PlaceDetailSheet: View {
     let place: MapPlace

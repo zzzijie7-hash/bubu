@@ -18,7 +18,7 @@ public class CDPlace: NSManagedObject {
 }
 
 @objc(CDUserPlace)
-public class CDUserPlace: NSManagedObject {
+public class CDUserPlace: NSManagedObject, Identifiable {
     @NSManaged public var id: UUID?
     @NSManaged public var statusValue: Int16
     @NSManaged public var rating: Int16
