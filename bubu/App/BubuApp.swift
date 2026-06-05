@@ -27,7 +27,6 @@ final class AppState: ObservableObject {
         }
     }
     @Published var selectedTab: AppTab = .explore
-    @Published var pendingSearchPlace: MapPlace?
 
     init() {
         self.isOnboardingComplete = UserDefaults.standard.bool(forKey: "onboarding_complete")
@@ -92,34 +91,22 @@ struct NotchedPill: Shape {
         let nr = notchRadius
         let notchCenter = CGPoint(x: rect.midX, y: rect.minY)
 
-        // 左上角圆弧 → 凹口左侧
         path.move(to: CGPoint(x: r, y: rect.minY))
         path.addLine(to: CGPoint(x: notchCenter.x - nr - 6, y: rect.minY))
-
-        // 凹口圆弧（顺时针绕下去）
         path.addArc(center: notchCenter, radius: nr + 6,
                     startAngle: .degrees(180), endAngle: .degrees(0), clockwise: false)
-
-        // 凹口右侧 → 右上角圆弧
         path.addLine(to: CGPoint(x: rect.maxX - r, y: rect.minY))
         path.addArc(center: CGPoint(x: rect.maxX - r, y: rect.minY + r),
                     radius: r, startAngle: .degrees(-90), endAngle: .degrees(0), clockwise: false)
-
-        // 右侧边 → 右下角
         path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY - r))
         path.addArc(center: CGPoint(x: rect.maxX - r, y: rect.maxY - r),
                     radius: r, startAngle: .degrees(0), endAngle: .degrees(90), clockwise: false)
-
-        // 底边 → 左下角
         path.addLine(to: CGPoint(x: r, y: rect.maxY))
         path.addArc(center: CGPoint(x: r, y: rect.maxY - r),
                     radius: r, startAngle: .degrees(90), endAngle: .degrees(180), clockwise: false)
-
-        // 左侧边 → 左上角
         path.addLine(to: CGPoint(x: rect.minX, y: rect.minY + r))
         path.addArc(center: CGPoint(x: r, y: rect.minY + r),
                     radius: r, startAngle: .degrees(180), endAngle: .degrees(270), clockwise: false)
-
         path.closeSubpath()
         return path
     }
@@ -133,7 +120,6 @@ struct MainTabView: View {
 
     var body: some View {
         ZStack {
-            // 内容区
             Group {
                 if appState.selectedTab == .explore {
                     ExploreMapView()
@@ -142,7 +128,6 @@ struct MainTabView: View {
                 }
             }
 
-            // 悬浮底栏
             VStack {
                 Spacer()
                 FloatingTabBar(selectedTab: $appState.selectedTab) {
@@ -152,10 +137,7 @@ struct MainTabView: View {
         }
         .ignoresSafeArea()
         .sheet(isPresented: $showingAddSearch) {
-            AddPlaceSearchSheet { place in
-                appState.pendingSearchPlace = place
-                appState.selectedTab = .explore
-            }
+            AddPlaceSearchSheet()
         }
     }
 }
@@ -168,13 +150,11 @@ struct FloatingTabBar: View {
 
     var body: some View {
         ZStack(alignment: .top) {
-            // 胶囊背景
             NotchedPill(notchRadius: 28)
                 .fill(BubuTheme.Surface.surface1)
                 .frame(width: 180, height: 56)
                 .shadow(color: .black.opacity(0.4), radius: 16, y: 4)
 
-            // 左侧：探索
             HStack(spacing: 0) {
                 Button {
                     selectedTab = .explore
@@ -191,7 +171,6 @@ struct FloatingTabBar: View {
 
                 Spacer().frame(width: 56)
 
-                // 右侧：我的
                 Button {
                     selectedTab = .profile
                 } label: {
@@ -207,7 +186,6 @@ struct FloatingTabBar: View {
             }
             .frame(height: 56)
 
-            // + 按钮（浮在凹口上方）
             Button(action: onAddTap) {
                 Image(systemName: "plus")
                     .font(.system(size: 22, weight: .medium))
@@ -223,15 +201,24 @@ struct FloatingTabBar: View {
     }
 }
 
-// MARK: - 添加搜索 Sheet（从底导 + 触发）
+// MARK: - 添加搜索 Sheet（搜→就地标→打卡 一条龙）
 
 struct AddPlaceSearchSheet: View {
     @EnvironmentObject var container: AppContainer
-    let onSelect: (MapPlace) -> Void
+    @Environment(\.dismiss) private var dismiss
+
     @State private var query = ""
     @State private var results: [MapPlace] = []
     @State private var isSearching = false
-    @Environment(\.dismiss) private var dismiss
+
+    // 展开的地点（点搜索结果后展开状态选择）
+    @State private var expandingPlace: MapPlace?
+    @State private var selectedStatus: PlaceStatus = .wantToGo
+    // 笔记
+    @State private var noteText: String = ""
+    @State private var visitDate: Date = Date()
+    // 保存中
+    @State private var isSaving = false
 
     var body: some View {
         NavigationStack {
@@ -246,7 +233,10 @@ struct AddPlaceSearchSheet: View {
                         .foregroundStyle(BubuTheme.Text.ink)
                         .onSubmit { doSearch() }
                     if !query.isEmpty {
-                        Button { query = ""; results = [] } label: {
+                        Button {
+                            query = ""; results = []
+                            expandingPlace = nil
+                        } label: {
                             Image(systemName: "xmark.circle.fill")
                                 .font(.system(size: 14))
                                 .foregroundStyle(BubuTheme.Text.tertiary)
@@ -269,10 +259,104 @@ struct AddPlaceSearchSheet: View {
                     ScrollView {
                         LazyVStack(spacing: 0) {
                             ForEach(results) { place in
-                                Button { onSelect(place); dismiss() } label: {
-                                    PlaceSearchRow(place: place)
+                                VStack(spacing: 0) {
+                                    // 搜索结果行
+                                    Button {
+                                        withAnimation(.easeInOut(duration: 0.2)) {
+                                            if expandingPlace?.id == place.id {
+                                                expandingPlace = nil
+                                            } else {
+                                                expandingPlace = place
+                                                selectedStatus = .wantToGo
+                                                noteText = ""
+                                            }
+                                        }
+                                    } label: {
+                                        PlaceSearchRow(place: place)
+                                    }
+                                    .buttonStyle(.plain)
+
+                                    // 展开：状态选择 + 笔记
+                                    if expandingPlace?.id == place.id {
+                                        VStack(alignment: .leading, spacing: 16) {
+                                            // 状态选择
+                                            HStack(spacing: 10) {
+                                                ForEach(PlaceStatus.allCases, id: \.rawValue) { s in
+                                                    Button {
+                                                        withAnimation(.easeInOut(duration: 0.15)) {
+                                                            selectedStatus = s
+                                                        }
+                                                    } label: {
+                                                        VStack(spacing: 5) {
+                                                            Image(systemName: statusIcon(for: s))
+                                                                .font(.system(size: 16))
+                                                            Text(s.displayName)
+                                                                .font(.system(size: 10))
+                                                        }
+                                                        .foregroundStyle(selectedStatus == s ? .white : BubuTheme.Text.secondary)
+                                                        .frame(maxWidth: .infinity)
+                                                        .padding(.vertical, 10)
+                                                        .background(RoundedRectangle(cornerRadius: BubuRadius.sm)
+                                                            .fill(selectedStatus == s ? BubuTheme.colorForStatus(s) : BubuTheme.Surface.surface2))
+                                                    }
+                                                }
+                                            }
+
+                                            // 笔记（去过时才显示，想去直接保存）
+                                            if selectedStatus != .wantToGo {
+                                                VStack(alignment: .leading, spacing: 10) {
+                                                    HStack(spacing: 8) {
+                                                        Image(systemName: "pencil.line")
+                                                            .font(.system(size: 13))
+                                                            .foregroundStyle(BubuTheme.Text.tertiary)
+                                                        Text("记录这一刻")
+                                                            .font(BubuFont.titleSM)
+                                                            .foregroundStyle(BubuTheme.Text.secondary)
+                                                    }
+                                                    TextField("写点感受…", text: $noteText, axis: .vertical)
+                                                        .font(BubuFont.body)
+                                                        .foregroundStyle(BubuTheme.Text.ink)
+                                                        .padding(12)
+                                                        .background(BubuTheme.Surface.surface2)
+                                                        .clipShape(RoundedRectangle(cornerRadius: BubuRadius.sm))
+                                                        .frame(minHeight: 80)
+
+                                                    HStack {
+                                                        Image(systemName: "calendar")
+                                                            .font(.system(size: 13))
+                                                            .foregroundStyle(BubuTheme.Text.tertiary)
+                                                        DatePicker("到访日期", selection: $visitDate, displayedComponents: .date)
+                                                            .labelsHidden()
+                                                            .colorScheme(.dark)
+                                                    }
+                                                }
+                                            }
+
+                                            // 保存按钮
+                                            Button {
+                                                savePlace(place)
+                                            } label: {
+                                                HStack {
+                                                    if isSaving {
+                                                        ProgressView().tint(BubuTheme.Text.onPrimary)
+                                                    } else {
+                                                        Text("标记完成").font(BubuFont.button)
+                                                    }
+                                                }
+                                                .frame(maxWidth: .infinity)
+                                                .padding(.vertical, 12)
+                                                .background(BubuTheme.colorForStatus(selectedStatus))
+                                                .foregroundStyle(.white)
+                                                .clipShape(RoundedRectangle(cornerRadius: BubuRadius.md))
+                                            }
+                                            .disabled(isSaving)
+                                        }
+                                        .padding(16)
+                                        .background(BubuTheme.Surface.surface1)
+                                        .clipShape(RoundedRectangle(cornerRadius: BubuRadius.md))
+                                        .padding(.horizontal, 16).padding(.bottom, 12)
+                                    }
                                 }
-                                .buttonStyle(.plain)
                                 Divider().background(BubuTheme.Text.tertiary).padding(.leading, 52)
                             }
                         }
@@ -285,35 +369,25 @@ struct AddPlaceSearchSheet: View {
                             .font(.system(size: 32))
                             .foregroundStyle(BubuTheme.Text.tertiary)
                         Text("没有找到「\(query)」")
-                            .font(BubuFont.titleSM)
-                            .foregroundStyle(BubuTheme.Text.secondary)
-                        Text("换个关键词试试")
-                            .font(BubuFont.caption)
-                            .foregroundStyle(BubuTheme.Text.tertiary)
+                            .font(BubuFont.titleSM).foregroundStyle(BubuTheme.Text.secondary)
+                        Text("换个关键词试试").font(BubuFont.caption).foregroundStyle(BubuTheme.Text.tertiary)
                         Spacer()
-                    }
-                    .frame(maxWidth: .infinity)
+                    }.frame(maxWidth: .infinity)
                 } else {
                     VStack(spacing: 16) {
                         Spacer().frame(height: 60)
                         Image(systemName: "sparkles")
                             .font(.system(size: 36))
                             .foregroundStyle(BubuTheme.Primary.green.opacity(0.6))
-                        Text("搜一家店，开始记录")
-                            .font(BubuFont.titleSM)
-                            .foregroundStyle(BubuTheme.Text.secondary)
-                        Text("试试搜「火锅」「咖啡」「甜品」")
-                            .font(BubuFont.caption)
-                            .foregroundStyle(BubuTheme.Text.tertiary)
+                        Text("搜一家店，开始记录").font(BubuFont.titleSM).foregroundStyle(BubuTheme.Text.secondary)
+                        Text("试试搜「火锅」「咖啡」「甜品」").font(BubuFont.caption).foregroundStyle(BubuTheme.Text.tertiary)
                         Spacer()
-                    }
-                    .frame(maxWidth: .infinity)
+                    }.frame(maxWidth: .infinity)
                 }
             }
             .background(BubuTheme.Surface.space)
-            .navigationTitle("添加地点")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("取消") { dismiss() } } }
+            .navigationTitle("添加地点").navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("完成") { dismiss() } } }
         }
     }
 
@@ -321,6 +395,7 @@ struct AddPlaceSearchSheet: View {
         let q = query.trimmingCharacters(in: .whitespaces)
         guard !q.isEmpty else { return }
         isSearching = true
+        expandingPlace = nil
         let center = container.locationManager.currentLocation?.coordinate
             ?? CLLocationCoordinate2D(latitude: 31.215070, longitude: 121.474434)
         Task {
@@ -334,16 +409,64 @@ struct AddPlaceSearchSheet: View {
             isSearching = false
         }
     }
+
+    private func savePlace(_ mapPlace: MapPlace) {
+        isSaving = true
+        let folder = container.placeRepository.fetchFolders().first
+        let up = container.placeRepository.addPlace(
+            name: mapPlace.name,
+            address: mapPlace.address,
+            latitude: mapPlace.coordinate.latitude,
+            longitude: mapPlace.coordinate.longitude,
+            status: selectedStatus,
+            folder: folder,
+            sourceType: .manual,
+            sourceURL: nil
+        )
+        // 去过的话，写入打卡记录
+        if selectedStatus != .wantToGo {
+            let mood = detectMood(from: noteText)
+            container.placeRepository.checkIn(
+                userPlace: up,
+                mood: mood,
+                rating: 0,
+                note: noteText.isEmpty ? nil : noteText,
+                visitDate: visitDate
+            )
+        }
+        // 从结果列表移除
+        withAnimation {
+            results.removeAll { $0.id == mapPlace.id }
+            expandingPlace = nil
+        }
+        isSaving = false
+    }
+
+    private func detectMood(from text: String) -> MoodTag? {
+        let lower = text.lowercased()
+        if lower.contains("好") || lower.contains("棒") || lower.contains("赞") || lower.contains("推荐") { return .happy }
+        if lower.contains("差") || lower.contains("难吃") || lower.contains("坑") || lower.contains("雷") { return .disappointed }
+        if lower.contains("惬意") || lower.contains("舒服") || lower.contains("安静") { return .calm }
+        return nil
+    }
+
+    private func statusIcon(for status: PlaceStatus) -> String {
+        switch status {
+        case .wantToGo: return "bookmark.fill"
+        case .visitedGood: return "hand.thumbsup.fill"
+        case .visitedBad: return "hand.thumbsdown.fill"
+        case .visitedNeutral: return "checkmark.circle.fill"
+        }
+    }
 }
 
-// MARK: - 搜索结果行（添加面板专用）
+// MARK: - 搜索结果行
 
 struct PlaceSearchRow: View {
     let place: MapPlace
 
     var body: some View {
         HStack(spacing: 12) {
-            // 类别图标
             Image(systemName: categoryIcon)
                 .font(.system(size: 15))
                 .foregroundStyle(categoryColor)
@@ -351,7 +474,6 @@ struct PlaceSearchRow: View {
                 .background(categoryColor.opacity(0.12))
                 .clipShape(RoundedRectangle(cornerRadius: 6))
 
-            // 名称 + 地址
             VStack(alignment: .leading, spacing: 4) {
                 Text(place.name)
                     .font(BubuFont.titleSM)
@@ -367,7 +489,6 @@ struct PlaceSearchRow: View {
 
             Spacer()
 
-            // 高德评分 + 距离
             VStack(alignment: .trailing, spacing: 3) {
                 if let rating = place.rating {
                     HStack(spacing: 3) {
