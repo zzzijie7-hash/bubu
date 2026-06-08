@@ -71,16 +71,33 @@ final class AMapService: MapServiceProtocol {
         components.queryItems = [
             URLQueryItem(name: "key", value: apiKey),
             URLQueryItem(name: "location", value: "\(coordinate.longitude),\(coordinate.latitude)"),
-            URLQueryItem(name: "extensions", value: "base")
+            URLQueryItem(name: "extensions", value: "all"),
+            URLQueryItem(name: "radius", value: "300"),
+            URLQueryItem(name: "poitype", value: "餐饮服务|购物服务|风景名胜|科教文化服务|交通设施服务|公司企业|金融保险服务|生活服务|体育休闲服务|医疗保健服务|住宿服务|公共设施")
         ]
 
         guard let url = components.url else { throw AMapError.invalidURL }
         let (data, _) = try await URLSession.shared.data(from: url)
         let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
         let regeocode = obj["regeocode"] as? [String: Any] ?? [:]
-        let addr = regeocode["formatted_address"] as? String ?? "未知位置"
 
-        // 裁剪掉"上海市"等前缀，保留街道级地址
+        // 优先取最近的商业/地标类 POI（过滤掉住宅小区）
+        if let pois = regeocode["pois"] as? [[String: Any]] {
+            // 商业类 POI type 前缀：05餐饮 06购物 07旅游 08娱乐 10住宿 11风景 14科教 15交通 17公司 16金融
+            let goodPrefixes = ["05", "06", "07", "08", "10", "11", "14", "15", "16", "17"]
+            for poi in pois {
+                guard let name = poi["name"] as? String, !name.isEmpty else { continue }
+                let typecode = poi["typecode"] as? String ?? ""
+                let prefix = String(typecode.prefix(2))
+                if goodPrefixes.contains(prefix) { return name }
+            }
+        }
+        // 其次取 AOI（区域面，如商圈/园区）
+        if let aois = regeocode["aois"] as? [[String: Any]], let name = aois.first?["name"] as? String, !name.isEmpty {
+            return name
+        }
+        // 兜底：街道地址，裁剪城市前缀
+        let addr = regeocode["formatted_address"] as? String ?? "未知位置"
         return addr
             .replacingOccurrences(of: "上海市", with: "")
             .replacingOccurrences(of: "北京市", with: "")
