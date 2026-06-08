@@ -9,9 +9,6 @@ struct ExploreMapView: View {
     @State private var camera: MapCameraPosition = .automatic
     @State private var showingFilter = false
     @State private var filter = PlaceFilter()
-    @State private var searchResults: [MapPlace] = []
-    @State private var selectedPlace: MapPlace?
-    @State private var nearbyPlaces: [MapPlace] = []
     @State private var allUserPlaces: [CDUserPlace] = []
     @State private var selectedUserPlace: CDUserPlace?
     @State private var selectedAnnotationID: String?
@@ -24,64 +21,47 @@ struct ExploreMapView: View {
     var body: some View {
         ZStack {
             Map(position: $camera, interactionModes: .all, selection: $selectedAnnotationID) {
+                // 当前位置（头像风格浮标）
                 if let loc = container.locationManager.currentLocation {
                     Annotation("", coordinate: loc.coordinate) {
                         ZStack {
-                            Circle().fill(BubuTheme.Primary.green.opacity(0.2)).frame(width: 24, height: 24)
-                            Circle().fill(BubuTheme.Primary.green).frame(width: 10, height: 10)
-                            Circle().stroke(.white, lineWidth: 2).frame(width: 10, height: 10)
+                            Circle().fill(BubuTheme.Primary.green.opacity(0.2)).frame(width: 40, height: 40)
+                            Circle().fill(BubuTheme.Primary.green.opacity(0.1)).frame(width: 56, height: 56)
+                            ZStack {
+                                Circle()
+                                    .fill(BubuTheme.Primary.green)
+                                    .frame(width: 30, height: 30)
+                                    .shadow(color: BubuTheme.Primary.green.opacity(0.3), radius: 6, y: 2)
+                                Image(systemName: "person.crop.circle.fill")
+                                    .font(.system(size: 14))
+                                    .foregroundStyle(BubuTheme.Text.onPrimary)
+                            }
                         }
                     }
                 }
 
-                // 用户标记（四种状态不同图标+颜色）
+                // 用户标记
                 ForEach(allUserPlaces, id: \.id) { up in
                     let p = up.place
                     let coord = CLLocationCoordinate2D(latitude: p?.latitude ?? 0, longitude: p?.longitude ?? 0)
                     let status = PlaceStatus(rawValue: up.statusValue) ?? .wantToGo
-                    let color = BubuTheme.mapMarkerColor(for: status)
                     Annotation("", coordinate: coord) {
-                        UserPlaceMarker(status: status, color: color, name: p?.name ?? "")
+                        UserPlaceMarker(status: status, color: BubuTheme.mapMarkerColor(for: status), name: p?.name ?? "")
                     }
                     .tag("user_\(p?.id?.uuidString ?? "")")
                 }
-
-                // 系统 POI：只在无筛选时显示
-                if !isFiltering {
-                    ForEach(nearbyPlaces) { place in
-                        Marker(place.name, systemImage: categoryMarkerIcon(for: place.category), coordinate: place.coordinate)
-                            .tint(BubuTheme.Primary.green.opacity(0.5))
-                            .tag("nearby_\(place.id)")
-                    }
-                    ForEach(searchResults) { place in
-                        Marker(place.name, systemImage: categoryMarkerIcon(for: place.category), coordinate: place.coordinate)
-                            .tint(BubuTheme.Primary.green)
-                            .tag("search_\(place.id)")
-                    }
-                }
             }
-            .mapStyle(.standard(elevation: .realistic, pointsOfInterest: isFiltering ? .excludingAll : .all))
+            .mapStyle(.standard(elevation: .realistic, pointsOfInterest: .excludingAll))
             .mapControls { MapCompass() }
             .onChange(of: selectedAnnotationID) { _, tagID in
-                guard let tagID, !tagID.isEmpty else { return }
-                if tagID.hasPrefix("user_") {
-                    let id = String(tagID.dropFirst(5))
-                    if let up = allUserPlaces.first(where: { $0.place?.id?.uuidString == id }),
-                       let p = up.place {
-                        let c = CLLocationCoordinate2D(latitude: p.latitude, longitude: p.longitude)
-                        withAnimation(.easeInOut(duration: 0.4)) {
-                            zoomTo(center: c, meters: 500)
-                        }
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { selectedUserPlace = up }
-                    }
-                    return
+                guard let tagID, tagID.hasPrefix("user_") else { return }
+                let id = String(tagID.dropFirst(5))
+                if let up = allUserPlaces.first(where: { $0.place?.id?.uuidString == id }),
+                   let p = up.place {
+                    let c = CLLocationCoordinate2D(latitude: p.latitude, longitude: p.longitude)
+                    withAnimation(.easeInOut(duration: 0.4)) { zoomTo(center: c, meters: 500) }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { selectedUserPlace = up }
                 }
-                let (coord, place) = lookupAnnotation(tagID)
-                guard let coord, let place else { return }
-                withAnimation(.easeInOut(duration: 0.4)) {
-                    zoomTo(center: coord, meters: 500)
-                }
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { selectedPlace = place }
             }
 
             // 顶部浮层
@@ -123,14 +103,14 @@ struct ExploreMapView: View {
                     Button { showingFilter.toggle() } label: {
                         Image(systemName: "line.3.horizontal.decrease")
                             .font(.system(size: 14, weight: .medium))
-                            .foregroundStyle(isFiltering ? BubuTheme.Primary.green : BubuTheme.Text.ink)
+                            .foregroundStyle(filter.isEmpty ? BubuTheme.Text.ink : BubuTheme.Primary.green)
                             .frame(width: 38, height: 38)
-                            .background(isFiltering ? Material.regular : .ultraThinMaterial).clipShape(Circle())
+                            .background(filter.isEmpty ? .ultraThinMaterial : Material.regular).clipShape(Circle())
                     }
                 }
                 .padding(.horizontal, 16).padding(.top, 54)
 
-                if isFiltering {
+                if !filter.isEmpty {
                     FilterChipBar(filter: $filter)
                         .padding(.horizontal, 16).padding(.top, 8)
                 }
@@ -141,7 +121,6 @@ struct ExploreMapView: View {
         .onAppear {
             container.locationManager.requestPermission()
             reloadUserPlaces()
-            loadNearby()
             reverseGeocodeCurrent()
             goToMyLocation()
         }
@@ -157,19 +136,19 @@ struct ExploreMapView: View {
                 currentAddress: $currentAddress, savedAddresses: $savedAddresses,
                 searchHistory: $addressSearchHistory,
                 onSelect: { addr in
-                    showingAddressPicker = false; currentAddress = addr.name
+                    showingAddressPicker = false
+                    if addr.label == nil, addr.name != "当前位置" {
+                        currentAddress = addr.name
+                    }
                     if !addressSearchHistory.contains(addr.name) {
                         addressSearchHistory.insert(addr.name, at: 0)
                         if addressSearchHistory.count > 10 { addressSearchHistory.removeLast() }
                     }
                     zoomTo(center: addr.coordinate, meters: 1000)
-                    nearbyPlaces = []; searchAtLocation(addr.coordinate)
                 }
             )
         }
     }
-
-    private var isFiltering: Bool { !filter.isEmpty }
 
     // MARK: - 缩放
 
@@ -180,18 +159,12 @@ struct ExploreMapView: View {
         }
     }
 
-    private func zoomIn() {
-        currentZoomLevel = max(100, currentZoomLevel / 2)
-        zoomToCurrent()
-    }
-
-    private func zoomOut() {
-        currentZoomLevel = min(50000, currentZoomLevel * 2)
-        zoomToCurrent()
-    }
+    private func zoomIn() { currentZoomLevel = max(100, currentZoomLevel / 2); zoomToCurrent() }
+    private func zoomOut() { currentZoomLevel = min(50000, currentZoomLevel * 2); zoomToCurrent() }
 
     private func zoomToCurrent() {
-        let center = lookupCurrentCenter()
+        let center = container.locationManager.currentLocation?.coordinate
+            ?? CLLocationCoordinate2D(latitude: 31.215070, longitude: 121.474434)
         withAnimation(.easeInOut(duration: 0.3)) {
             camera = .region(MKCoordinateRegion(center: center, latitudinalMeters: currentZoomLevel, longitudinalMeters: currentZoomLevel))
         }
@@ -202,11 +175,6 @@ struct ExploreMapView: View {
         withAnimation(.easeInOut(duration: 0.3)) {
             camera = .region(MKCoordinateRegion(center: center, latitudinalMeters: meters, longitudinalMeters: meters))
         }
-    }
-
-    private func lookupCurrentCenter() -> CLLocationCoordinate2D {
-        container.locationManager.currentLocation?.coordinate
-            ?? CLLocationCoordinate2D(latitude: 31.215070, longitude: 121.474434)
     }
 
     // MARK: - 数据
@@ -220,52 +188,6 @@ struct ExploreMapView: View {
     }
 
     private func reloadUserPlaces() { allUserPlaces = container.placeRepository.fetchUserPlaces() }
-
-    private func loadNearby() {
-        if let loc = container.locationManager.currentLocation { searchAtLocation(loc.coordinate) }
-    }
-
-    private func searchAtLocation(_ coord: CLLocationCoordinate2D) {
-        Task {
-            async let food = container.mapService.searchNearby(coordinate: coord, radius: 1500, category: .restaurant)
-            async let cafe = container.mapService.searchNearby(coordinate: coord, radius: 1500, category: .cafe)
-            async let bar = container.mapService.searchNearby(coordinate: coord, radius: 1500, category: .bar)
-            var all: [MapPlace] = []
-            for items in [try? await food, try? await cafe, try? await bar] {
-                all.append(contentsOf: items?.prefix(5) ?? [])
-            }
-            var seen = Set<String>()
-            nearbyPlaces = all.filter { seen.insert($0.id).inserted }
-        }
-    }
-
-    private func categoryMarkerIcon(for category: String?) -> String {
-        guard let cat = category else { return "mappin" }
-        if cat.contains("餐饮") || cat.contains("餐厅") { return "fork.knife" }
-        if cat.contains("咖啡") || cat.contains("茶") { return "cup.and.saucer.fill" }
-        if cat.contains("酒吧") { return "wineglass.fill" }
-        if cat.contains("购物") { return "bag.fill" }
-        if cat.contains("公园") { return "leaf.fill" }
-        if cat.contains("景点") || cat.contains("风景") { return "mountain.2.fill" }
-        if cat.contains("博物馆") || cat.contains("展览") { return "building.columns.fill" }
-        if cat.contains("住宿") || cat.contains("酒店") { return "bed.double.fill" }
-        if cat.contains("娱乐") { return "sparkles" }
-        if cat.contains("运动") { return "figure.run" }
-        if cat.contains("甜品") || cat.contains("糕点") { return "birthday.cake" }
-        return "mappin"
-    }
-
-    private func lookupAnnotation(_ tagID: String) -> (CLLocationCoordinate2D?, MapPlace?) {
-        if tagID.hasPrefix("search_") {
-            let id = String(tagID.dropFirst(7))
-            if let p = searchResults.first(where: { $0.id == id }) { return (p.coordinate, p) }
-        }
-        if tagID.hasPrefix("nearby_") {
-            let id = String(tagID.dropFirst(7))
-            if let p = nearbyPlaces.first(where: { $0.id == id }) { return (p.coordinate, p) }
-        }
-        return (nil, nil)
-    }
 }
 
 // MARK: - 用户地点标记
@@ -278,9 +200,7 @@ struct UserPlaceMarker: View {
     var body: some View {
         VStack(spacing: 2) {
             ZStack {
-                Circle()
-                    .fill(color.opacity(0.25))
-                    .frame(width: 32, height: 32)
+                Circle().fill(color.opacity(0.25)).frame(width: 32, height: 32)
                 Image(systemName: statusIcon)
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(color)
@@ -319,15 +239,20 @@ struct UserPlaceDetailSheet: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     HStack {
-                        Image(systemName: UserPlaceMarker(status: status, color: .clear, name: "").statusIconFallback(status))
+                        Image(systemName: {
+                            switch status {
+                            case .wantToGo: return "bookmark.fill"
+                            case .visitedGood: return "hand.thumbsup.fill"
+                            case .visitedBad: return "hand.thumbsdown.fill"
+                            case .visitedNeutral: return "checkmark.circle.fill"
+                            }
+                        }())
                             .foregroundStyle(BubuTheme.colorForStatus(status))
                         Text(status.displayName)
-                            .font(BubuFont.titleSM)
-                            .foregroundStyle(BubuTheme.colorForStatus(status))
+                            .font(BubuFont.titleSM).foregroundStyle(BubuTheme.colorForStatus(status))
                         Spacer()
                     }
-                    .padding(12)
-                    .background(BubuTheme.colorForStatus(status).opacity(0.12))
+                    .padding(12).background(BubuTheme.colorForStatus(status).opacity(0.12))
                     .clipShape(RoundedRectangle(cornerRadius: BubuRadius.md))
 
                     Text(place?.name ?? "未知地点").font(BubuFont.titleXL).foregroundStyle(BubuTheme.Text.ink)
@@ -343,7 +268,6 @@ struct UserPlaceDetailSheet: View {
                             CheckInRowView(checkIn: checkIn)
                         }
                     }
-
                     if userPlace.rating > 0 {
                         HStack {
                             Text("评分").font(BubuFont.titleSM).foregroundStyle(BubuTheme.Text.secondary)
@@ -351,12 +275,6 @@ struct UserPlaceDetailSheet: View {
                                 Image(systemName: i <= userPlace.rating ? "star.fill" : "star")
                                     .font(.caption).foregroundStyle(i <= userPlace.rating ? BubuTheme.Semantic.visitedNeutral : BubuTheme.Text.tertiary)
                             }
-                        }
-                    }
-                    if let mood = userPlace.mood {
-                        HStack {
-                            Text("心情").font(BubuFont.titleSM).foregroundStyle(BubuTheme.Text.secondary)
-                            Text(mood).font(BubuFont.body).foregroundStyle(BubuTheme.Text.ink)
                         }
                     }
                     if let review = userPlace.reviewText, !review.isEmpty {
@@ -371,23 +289,11 @@ struct UserPlaceDetailSheet: View {
                             Text(visitDate.formatted(date: .long, time: .omitted)).font(BubuFont.body).foregroundStyle(BubuTheme.Text.ink)
                         }
                     }
-
                     Spacer()
                 }.padding(20)
             }
             .background(BubuTheme.Surface.space).navigationTitle("地点详情").navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("关闭") { dismiss() } } }
-        }
-    }
-}
-
-extension UserPlaceMarker {
-    func statusIconFallback(_ status: PlaceStatus) -> String {
-        switch status {
-        case .wantToGo: return "bookmark.fill"
-        case .visitedGood: return "hand.thumbsup.fill"
-        case .visitedBad: return "hand.thumbsdown.fill"
-        case .visitedNeutral: return "checkmark.circle.fill"
         }
     }
 }
@@ -399,7 +305,9 @@ struct CheckInRowView: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
                 if let mood = checkIn.mood {
-                    Text(moodEmoji(mood)).font(.title3)
+                    Text(
+                        MoodTag.allCases.first(where: { $0.rawValue == mood })?.emoji ?? "📝"
+                    ).font(.title3)
                 }
                 HStack(spacing: 4) {
                     ForEach(1...5, id: \.self) { i in
@@ -419,13 +327,9 @@ struct CheckInRowView: View {
         }
         .padding(14).background(BubuTheme.Surface.surface1).clipShape(RoundedRectangle(cornerRadius: BubuRadius.md))
     }
-
-    private func moodEmoji(_ mood: String) -> String {
-        MoodTag.allCases.first(where: { $0.rawValue == mood })?.emoji ?? "📝"
-    }
 }
 
-// MARK: - 地址/筛选等辅助 View（不变）
+// MARK: - 地址/筛选等
 
 struct SavedAddress: Identifiable, Codable {
     var id = UUID(); let name: String; let lat: Double; let lon: Double; let label: String?
@@ -458,31 +362,85 @@ struct AddressSearchView: View {
     let onSelect: (SavedAddress) -> Void
     @Environment(\.dismiss) private var dismiss; @EnvironmentObject var container: AppContainer
     @State private var query = ""; @State private var searchResults: [MapPlace] = []; @State private var isSearching = false
+    @State private var locationAddress = "" // 当前位置的真实地址
 
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
                 HStack { Image(systemName: "magnifyingglass").foregroundStyle(BubuTheme.Text.tertiary); TextField("搜索地址...", text: $query).font(BubuFont.body).foregroundStyle(BubuTheme.Text.ink).onSubmit { searchAddress() } }
                     .padding(12).background(BubuTheme.Surface.surface1).clipShape(RoundedRectangle(cornerRadius: BubuRadius.md)).padding(16)
+
                 if isSearching { Spacer(); ProgressView().tint(BubuTheme.Primary.green); Spacer() }
                 else if !searchResults.isEmpty {
-                    List(searchResults) { p in Button { let a = SavedAddress(name: p.name, lat: p.coordinate.latitude, lon: p.coordinate.longitude, label: nil); if !savedAddresses.contains(where: { $0.name == p.name }) { savedAddresses.append(a) }; onSelect(a) } label: { SearchResultRow(place: p) }.listRowBackground(BubuTheme.Surface.surface1) }.listStyle(.plain)
+                    List {
+                        Section("搜索结果") {
+                            currentLocationRow
+                            ForEach(searchResults) { p in
+                                Button {
+                                    let a = SavedAddress(name: p.name, lat: p.coordinate.latitude, lon: p.coordinate.longitude, label: nil)
+                                    if !savedAddresses.contains(where: { $0.name == p.name }) { savedAddresses.append(a) }
+                                    onSelect(a)
+                                } label: { SearchResultRow(place: p) }.listRowBackground(BubuTheme.Surface.surface1)
+                            }
+                        }
+                    }.listStyle(.plain)
                 } else {
                     List {
+                        Section {
+                            currentLocationRow
+                        }
                         Section("常用地址") { ForEach(savedAddresses) { a in Button { onSelect(a) } label: { AddressRow(addr: a) }.listRowBackground(BubuTheme.Surface.surface1) } }
                         if !searchHistory.isEmpty {
                             Section("搜索历史") { ForEach(searchHistory, id: \.self) { h in Button { query = h; searchAddress() } label: { HStack { Image(systemName: "clock").font(.caption).foregroundStyle(BubuTheme.Text.tertiary); Text(h).font(BubuFont.body).foregroundStyle(BubuTheme.Text.secondary) } }.listRowBackground(BubuTheme.Surface.surface1) } }
                         }
                     }.scrollContentBackground(.hidden)
                 }
-            }.background(BubuTheme.Surface.space).navigationTitle("探索位置").navigationBarTitleDisplayMode(.inline)
+            }.background(BubuTheme.Surface.space).navigationTitle("选择位置").navigationBarTitleDisplayMode(.inline)
                 .toolbar { ToolbarItem(placement: .cancellationAction) { Button("取消") { dismiss() } } }
+                .task { resolveAddress() }
         }
     }
+
+    private var currentLocationRow: some View {
+        Button {
+            if let loc = container.locationManager.currentLocation {
+                let addr = SavedAddress(name: locationAddress.isEmpty ? "当前位置" : locationAddress, lat: loc.coordinate.latitude, lon: loc.coordinate.longitude, label: nil)
+                onSelect(addr)
+            }
+        } label: {
+            HStack(spacing: 12) {
+                ZStack {
+                    Circle().fill(BubuTheme.Primary.green.opacity(0.15)).frame(width: 32, height: 32)
+                    Image(systemName: "location.north.line.fill").font(.system(size: 14)).foregroundStyle(BubuTheme.Primary.green)
+                }
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(locationAddress.isEmpty ? "正在获取位置..." : locationAddress)
+                        .font(BubuFont.titleSM).foregroundStyle(BubuTheme.Text.ink)
+                        .lineLimit(1)
+                    Text("当前位置").font(.system(size: 11)).foregroundStyle(BubuTheme.Text.tertiary)
+                }
+                Spacer()
+                Image(systemName: "chevron.right").font(.caption).foregroundStyle(BubuTheme.Text.tertiary)
+            }
+            .padding(.vertical, 4)
+        }
+        .listRowBackground(BubuTheme.Surface.surface1)
+    }
+
+    private func resolveAddress() {
+        guard let loc = container.locationManager.currentLocation else { return }
+        Task {
+            do { locationAddress = try await container.mapService.reverseGeocode(coordinate: loc.coordinate) }
+            catch { locationAddress = "" }
+        }
+    }
+
     private func searchAddress() {
         guard !query.isEmpty else { return }
         isSearching = true
-        Task { do { searchResults = try await container.mapService.searchPlaces(query: query, region: MapRegion(center: CLLocationCoordinate2D(latitude: 31.215070, longitude: 121.474434), radius: 100000), filters: nil) } catch { searchResults = [] }; isSearching = false }
+        let center = container.locationManager.currentLocation?.coordinate
+            ?? CLLocationCoordinate2D(latitude: 31.215070, longitude: 121.474434)
+        Task { do { searchResults = try await container.mapService.searchPlaces(query: query, region: MapRegion(center: center, radius: 100000), filters: nil) } catch { searchResults = [] }; isSearching = false }
     }
 }
 

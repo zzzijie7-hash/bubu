@@ -71,23 +71,20 @@ final class AMapService: MapServiceProtocol {
         components.queryItems = [
             URLQueryItem(name: "key", value: apiKey),
             URLQueryItem(name: "location", value: "\(coordinate.longitude),\(coordinate.latitude)"),
-            URLQueryItem(name: "extensions", value: "all"),
-            URLQueryItem(name: "radius", value: "200"),
-            URLQueryItem(name: "poitype", value: "餐饮服务|购物服务|生活服务|体育休闲服务|医疗保健服务|住宿服务|风景名胜|商务住宅|科教文化服务|交通设施服务|金融保险服务|公司企业|道路附属设施|地名地址信息|公共设施")
+            URLQueryItem(name: "extensions", value: "base")
         ]
 
         guard let url = components.url else { throw AMapError.invalidURL }
         let (data, _) = try await URLSession.shared.data(from: url)
         let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
         let regeocode = obj["regeocode"] as? [String: Any] ?? [:]
+        let addr = regeocode["formatted_address"] as? String ?? "未知位置"
 
-        if let pois = regeocode["pois"] as? [[String: Any]], let name = pois.first?["name"] as? String, !name.isEmpty {
-            return name
-        }
-        if let aois = regeocode["aois"] as? [[String: Any]], let name = aois.first?["name"] as? String, !name.isEmpty {
-            return name
-        }
-        return regeocode["formatted_address"] as? String ?? "未知位置"
+        // 裁剪掉"上海市"等前缀，保留街道级地址
+        return addr
+            .replacingOccurrences(of: "上海市", with: "")
+            .replacingOccurrences(of: "北京市", with: "")
+            .trimmingCharacters(in: .whitespaces)
     }
 
     // MARK: - POI 详情

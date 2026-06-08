@@ -5,30 +5,30 @@ import SwiftUI
 // 单绿色 + 暗色阶梯 + 宇宙装饰
 
 enum BubuTheme {
-    // MARK: - 品牌色（仅一个彩色）
+    // MARK: - 品牌色
 
     enum Primary {
-        static let green = Color(hex: "4ADE80")
-        static let active = Color(hex: "22C55E")
-        static let soft = Color(hex: "166534")
+        static let green = Color(hex: "E3FA8C")
+        static let active = Color(hex: "C8E66A")
+        static let soft = Color(hex: "465A20")
     }
 
-    // MARK: - 表面层级
+    // MARK: - 表面层级（墨蓝）
 
     enum Surface {
-        static let space = Color(hex: "0A0A0F")
-        static let surface1 = Color(hex: "12121A")
-        static let surface2 = Color(hex: "1A1A24")
-        static let surface3 = Color(hex: "24243A")
+        static let space = Color(hex: "282A37")
+        static let surface1 = Color(hex: "2E303E")
+        static let surface2 = Color(hex: "343645")
+        static let surface3 = Color(hex: "3C3E50")
     }
 
     // MARK: - 文字
 
     enum Text {
-        static let ink = Color(hex: "F5F5F7")
-        static let secondary = Color(hex: "A1A1AA")
-        static let tertiary = Color(hex: "6B6B76")
-        static let onPrimary = Color(hex: "0A0A0F")
+        static let ink = Color(hex: "F0F0F5")
+        static let secondary = Color(hex: "9A9AAB")
+        static let tertiary = Color(hex: "6B6B80")
+        static let onPrimary = Color(hex: "1A1C24")
     }
 
     // MARK: - 语义色（尽量不用）
@@ -42,7 +42,7 @@ enum BubuTheme {
 
     enum Cosmic {
         static let starBright = Color(hex: "FFFFFF")
-        static let starDim = Color(hex: "A5B4FC")
+        static let starDim = Color(hex: "9DA5C0")
         static let nebulaPurple = Color(hex: "7C3AED")
         static let nebulaTeal = Color(hex: "2DD4BF")
     }
