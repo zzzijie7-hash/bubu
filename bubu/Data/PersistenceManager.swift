@@ -3,20 +3,30 @@ import CoreData
 final class PersistenceManager: ObservableObject {
     static let shared = PersistenceManager()
 
-    let container: NSPersistentContainer
+    let container: NSPersistentCloudKitContainer
 
     var viewContext: NSManagedObjectContext { container.viewContext }
 
     init(inMemory: Bool = false) {
-        container = NSPersistentContainer(name: "Bubu")
+        container = NSPersistentCloudKitContainer(name: "Bubu")
+
+        guard let storeDescription = container.persistentStoreDescriptions.first else {
+            fatalError("未找到持久化存储描述")
+        }
 
         if inMemory {
-            container.persistentStoreDescriptions.first?.url = URL(fileURLWithPath: "/dev/null")
+            storeDescription.url = URL(fileURLWithPath: "/dev/null")
+        } else {
+            storeDescription.setOption(true as NSNumber, forKey: NSPersistentHistoryTrackingKey)
+            storeDescription.setOption(true as NSNumber, forKey: NSPersistentStoreRemoteChangeNotificationPostOptionKey)
+            storeDescription.cloudKitContainerOptions = NSPersistentCloudKitContainerOptions(
+                containerIdentifier: "iCloud.com.bubu.app"
+            )
         }
 
         container.loadPersistentStores { _, error in
             if let error = error as NSError? {
-                fatalError("Core Data 加载失败: \(error)")
+                fatalError("Core Data + CloudKit 加载失败: \(error)")
             }
         }
 

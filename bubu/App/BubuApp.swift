@@ -27,6 +27,8 @@ final class AppState: ObservableObject {
         }
     }
     @Published var selectedTab: AppTab = .explore
+    /// 地图刷新触发器：添加面板保存地点后 +1
+    @Published var mapRefreshTrigger: Int = 0
 
     init() {
         self.isOnboardingComplete = UserDefaults.standard.bool(forKey: "onboarding_complete")
@@ -205,6 +207,7 @@ struct FloatingTabBar: View {
 
 struct AddPlaceSearchSheet: View {
     @EnvironmentObject var container: AppContainer
+    @EnvironmentObject var appState: AppState
     @Environment(\.dismiss) private var dismiss
 
     @State private var query = ""
@@ -439,6 +442,8 @@ struct AddPlaceSearchSheet: View {
             results.removeAll { $0.id == mapPlace.id }
             expandingPlace = nil
         }
+        // 通知地图刷新
+        appState.mapRefreshTrigger += 1
         isSaving = false
     }
 

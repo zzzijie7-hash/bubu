@@ -17,6 +17,7 @@ struct ExploreMapView: View {
     @State private var savedAddresses = SavedAddress.load()
     @State private var addressSearchHistory: [String] = []
     @State private var currentZoomLevel: Double = 1000
+    @EnvironmentObject var appState: AppState
 
     var body: some View {
         ZStack {
@@ -51,8 +52,9 @@ struct ExploreMapView: View {
                     .tag("user_\(p?.id?.uuidString ?? "")")
                 }
             }
-            .mapStyle(.standard(elevation: .realistic, pointsOfInterest: .excludingAll))
+            .mapStyle(.standard(elevation: .flat, pointsOfInterest: .excludingAll))
             .mapControls { MapCompass() }
+            .environment(\.locale, Locale(identifier: "zh_CN"))
             .onChange(of: selectedAnnotationID) { _, tagID in
                 guard let tagID, tagID.hasPrefix("user_") else { return }
                 let id = String(tagID.dropFirst(5))
@@ -123,6 +125,9 @@ struct ExploreMapView: View {
             reloadUserPlaces()
             reverseGeocodeCurrent()
             goToMyLocation()
+        }
+        .onChange(of: appState.mapRefreshTrigger) { _ in
+            reloadUserPlaces()
         }
         .onChange(of: container.locationManager.currentLocation) { _, newLoc in
             guard let loc = newLoc else { return }

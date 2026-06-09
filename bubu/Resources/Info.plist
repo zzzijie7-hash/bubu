@@ -18,6 +18,12 @@
     <string>6.0</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>zh_CN</string>
+    <key>CFBundleLocalizations</key>
+    <array>
+        <string>zh_CN</string>
+    </array>
     <key>LSRequiresIPhoneOS</key>
     <true/>
     <key>UILaunchScreen</key>
