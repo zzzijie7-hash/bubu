@@ -14,6 +14,19 @@ final class AMapService: MapServiceProtocol {
     // MARK: - 地点搜索
 
     func searchPlaces(query: String, region: MapRegion, filters: [PlaceCategoryType]?) async throws -> [MapPlace] {
+        let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedQuery.isEmpty else { return [] }
+
+        async let nearbyTask = searchNearbyPlaces(query: trimmedQuery, region: region, filters: filters)
+        async let globalTask = searchGlobalPlaces(query: trimmedQuery, region: region, filters: filters)
+
+        let nearbyPlaces = (try? await nearbyTask) ?? []
+        let globalPlaces = (try? await globalTask) ?? []
+        let merged = mergePlaces(nearby: nearbyPlaces, global: globalPlaces, center: region.center)
+        return filterPlacesByRelevance(merged, query: trimmedQuery)
+    }
+
+    private func searchNearbyPlaces(query: String, region: MapRegion, filters: [PlaceCategoryType]?) async throws -> [MapPlace] {
         let location = "\(region.center.longitude),\(region.center.latitude)"
         var components = URLComponents(string: "\(baseURL)/place/around")!
         components.queryItems = [
@@ -33,13 +46,155 @@ final class AMapService: MapServiceProtocol {
         let (data, _) = try await URLSession.shared.data(from: url)
         let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
         let pois = (obj["pois"] as? [[String: Any]]) ?? []
+        return pois.compactMap(parsePOI)
+    }
 
-        let places: [MapPlace] = pois.compactMap(parsePOI)
-        return places.sorted { a, b in
-            let ra = a.rating ?? 0, rb = b.rating ?? 0
-            if ra != rb { return ra > rb }
-            return (a.distance ?? 99999) < (b.distance ?? 99999)
+    private func searchGlobalPlaces(query: String, region: MapRegion, filters: [PlaceCategoryType]?) async throws -> [MapPlace] {
+        var components = URLComponents(string: "\(baseURL)/place/text")!
+        components.queryItems = [
+            URLQueryItem(name: "key", value: apiKey),
+            URLQueryItem(name: "keywords", value: query),
+            URLQueryItem(name: "offset", value: "20"),
+            URLQueryItem(name: "extensions", value: "all"),
+            URLQueryItem(name: "citylimit", value: "false"),
+            URLQueryItem(name: "location", value: "\(region.center.longitude),\(region.center.latitude)")
+        ]
+        if let code = filters?.first?.amapPOICode {
+            components.queryItems?.append(URLQueryItem(name: "types", value: code))
         }
+
+        guard let url = components.url else { throw AMapError.invalidURL }
+        let (data, _) = try await URLSession.shared.data(from: url)
+        let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
+        let pois = (obj["pois"] as? [[String: Any]]) ?? []
+        return pois.compactMap(parsePOI)
+    }
+
+    private func mergePlaces(nearby: [MapPlace], global: [MapPlace], center: CLLocationCoordinate2D) -> [MapPlace] {
+        var merged: [MapPlace] = []
+        var seen = Set<String>()
+
+        func normalizedKey(for place: MapPlace) -> String {
+            if let poiID = place.poiID, !poiID.isEmpty {
+                return poiID
+            }
+            let address = place.address ?? ""
+            return "\(place.name.lowercased())|\(address.lowercased())"
+        }
+
+        for place in nearby + global {
+            let key = normalizedKey(for: place)
+            guard !seen.contains(key) else { continue }
+            seen.insert(key)
+            merged.append(enrichedDistance(for: place, center: center))
+        }
+
+        return merged.sorted { lhs, rhs in
+            let leftDistance = lhs.distance ?? .greatestFiniteMagnitude
+            let rightDistance = rhs.distance ?? .greatestFiniteMagnitude
+            if leftDistance != rightDistance {
+                return leftDistance < rightDistance
+            }
+
+            let leftRating = lhs.rating ?? 0
+            let rightRating = rhs.rating ?? 0
+            if leftRating != rightRating {
+                return leftRating > rightRating
+            }
+
+            return lhs.name.localizedCompare(rhs.name) == .orderedAscending
+        }
+    }
+
+    private func filterPlacesByRelevance(_ places: [MapPlace], query: String) -> [MapPlace] {
+        let normalizedQuery = normalizeSearchText(query)
+        guard !normalizedQuery.isEmpty else { return places }
+
+        let queryTokens = normalizedQuery
+            .split(whereSeparator: \.isWhitespace)
+            .map(String.init)
+            .filter { !$0.isEmpty }
+
+        let scored: [(place: MapPlace, score: Int)] = places.compactMap { place in
+            let haystack = normalizeSearchText([
+                place.name,
+                place.address ?? "",
+                place.category ?? ""
+            ].joined(separator: " "))
+
+            guard !haystack.isEmpty else { return nil }
+
+            var score = 0
+
+            if haystack.contains(normalizedQuery) {
+                score += 100
+            }
+
+            if normalizeSearchText(place.name).contains(normalizedQuery) {
+                score += 80
+            }
+
+            for token in queryTokens {
+                if haystack.contains(token) {
+                    score += 20
+                }
+                if normalizeSearchText(place.name).contains(token) {
+                    score += 16
+                }
+                if let address = place.address, normalizeSearchText(address).contains(token) {
+                    score += 8
+                }
+            }
+
+            return score > 0 ? (place, score) : nil
+        }
+
+        return scored
+            .sorted { lhs, rhs in
+                if lhs.score != rhs.score { return lhs.score > rhs.score }
+
+                let leftDistance = lhs.place.distance ?? .greatestFiniteMagnitude
+                let rightDistance = rhs.place.distance ?? .greatestFiniteMagnitude
+                if leftDistance != rightDistance { return leftDistance < rightDistance }
+
+                return lhs.place.name.localizedCompare(rhs.place.name) == .orderedAscending
+            }
+            .map(\.place)
+    }
+
+    private func normalizeSearchText(_ text: String) -> String {
+        text
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .folding(options: [.caseInsensitive, .diacriticInsensitive, .widthInsensitive], locale: .current)
+            .replacingOccurrences(of: "\n", with: " ")
+            .replacingOccurrences(of: "·", with: " ")
+            .replacingOccurrences(of: "（", with: " ")
+            .replacingOccurrences(of: "）", with: " ")
+            .replacingOccurrences(of: "(", with: " ")
+            .replacingOccurrences(of: ")", with: " ")
+    }
+
+    private func enrichedDistance(for place: MapPlace, center: CLLocationCoordinate2D) -> MapPlace {
+        if place.distance != nil {
+            return place
+        }
+
+        let from = CLLocation(latitude: center.latitude, longitude: center.longitude)
+        let to = CLLocation(latitude: place.coordinate.latitude, longitude: place.coordinate.longitude)
+        let computedDistance = from.distance(from: to)
+
+        return MapPlace(
+            id: place.id,
+            name: place.name,
+            address: place.address,
+            coordinate: place.coordinate,
+            poiID: place.poiID,
+            category: place.category,
+            phone: place.phone,
+            coverImageURL: place.coverImageURL,
+            rating: place.rating,
+            distance: computedDistance
+        )
     }
 
     // MARK: - 周边搜索

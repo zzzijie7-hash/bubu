@@ -99,7 +99,7 @@ struct WelcomeView: View {
 
                     Image(systemName: "shoe.2.fill")
                         .font(.system(size: 44))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(BubuTheme.Text.onPrimary)
                         .rotationEffect(.degrees(-10))
                 }
 
@@ -240,7 +240,7 @@ struct TutorialSwipeView: View {
                         .overlay(
                             Image(systemName: "heart.fill")
                                 .font(.title2)
-                                .foregroundStyle(.white)
+                                .foregroundStyle(BubuTheme.Text.onPrimary)
                         )
                 }
             }
@@ -309,7 +309,7 @@ struct DiscoverCardView: View {
                 if let tag = place.tag {
                     Text(tag)
                         .font(BubuFont.titleSM)
-                        .foregroundStyle(.white)
+                        .foregroundStyle(BubuTheme.Text.onPrimary)
                         .padding(.horizontal, 12)
                         .padding(.vertical, 6)
                         .background(BubuTheme.Primary.green)
@@ -405,11 +405,11 @@ struct CategoryChip: View {
         VStack(spacing: 8) {
             Image(systemName: category.iconName)
                 .font(.title2)
-                .foregroundStyle(isSelected ? .white : category.color)
+                .foregroundStyle(isSelected ? BubuTheme.Text.onPrimary : category.color)
 
             Text(category.rawValue)
                 .font(BubuFont.caption)
-                .foregroundStyle(isSelected ? .white : BubuTheme.Text.secondary)
+                .foregroundStyle(isSelected ? BubuTheme.Text.onPrimary : BubuTheme.Text.secondary)
         }
         .frame(width: 90, height: 80)
         .background(

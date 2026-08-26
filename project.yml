@@ -1,6 +1,6 @@
 name: Bubu
 options:
-  bundleIdPrefix: com.bubu
+  bundleIdPrefix: com.fenglidawang
   deploymentTarget:
     iOS: "17.0"
 settings:
@@ -22,5 +22,10 @@ targets:
     settings:
       base:
         INFOPLIST_FILE: bubu/Resources/Info.plist
-        PRODUCT_BUNDLE_IDENTIFIER: com.bubu.app
+        PRODUCT_BUNDLE_IDENTIFIER: com.fenglidawang.bubu
         CODE_SIGN_STYLE: Automatic
+      configs:
+        Debug:
+          CODE_SIGN_ENTITLEMENTS: bubu/Resources/Bubu.entitlements
+        Release:
+          CODE_SIGN_ENTITLEMENTS: bubu/Resources/Bubu.entitlements

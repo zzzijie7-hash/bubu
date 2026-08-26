@@ -49,6 +49,12 @@ protocol ImportServiceProtocol {
     func parseSharedText(_ text: String) async throws -> [ImportablePlace]
 }
 
+protocol ImportCoordinatorProtocol {
+    func detectImportPreview(from text: String) async -> ImportPreview?
+    func detectClipboardPreview(from text: String) async -> ImportPreview?
+    func extractCollectionPayload(from preview: ImportPreview) async -> ImportCollectionPayload?
+}
+
 // MARK: - API 客户端协议
 
 protocol APIClientProtocol {

@@ -3,30 +3,42 @@ import CoreData
 final class PersistenceManager: ObservableObject {
     static let shared = PersistenceManager()
 
-    let container: NSPersistentCloudKitContainer
+    private(set) var container: NSPersistentContainer
+    private(set) var cloudSyncEnabled: Bool
 
     var viewContext: NSManagedObjectContext { container.viewContext }
+    var storageRootURL: URL { Self.storageRootURL() }
 
     init(inMemory: Bool = false) {
-        container = NSPersistentCloudKitContainer(name: "Bubu")
+        cloudSyncEnabled = Self.shouldEnableCloudSync(inMemory: inMemory)
+        try? Self.prepareStorageDirectory(inMemory: inMemory)
+        try? Self.migrateLegacyStoreIfNeeded(inMemory: inMemory)
 
-        guard let storeDescription = container.persistentStoreDescriptions.first else {
-            fatalError("未找到持久化存储描述")
-        }
-
-        if inMemory {
-            storeDescription.url = URL(fileURLWithPath: "/dev/null")
+        if cloudSyncEnabled {
+            let cloudContainer = NSPersistentCloudKitContainer(name: "Bubu")
+            Self.configureCloudContainer(cloudContainer, inMemory: inMemory)
+            container = cloudContainer
         } else {
-            storeDescription.setOption(true as NSNumber, forKey: NSPersistentHistoryTrackingKey)
-            storeDescription.setOption(true as NSNumber, forKey: NSPersistentStoreRemoteChangeNotificationPostOptionKey)
-            storeDescription.cloudKitContainerOptions = NSPersistentCloudKitContainerOptions(
-                containerIdentifier: "iCloud.com.bubu.app"
-            )
+            let localContainer = NSPersistentContainer(name: "Bubu")
+            Self.configureLocalContainer(localContainer, inMemory: inMemory)
+            container = localContainer
         }
 
-        container.loadPersistentStores { _, error in
-            if let error = error as NSError? {
-                fatalError("Core Data + CloudKit 加载失败: \(error)")
+        do {
+            try Self.loadStores(for: container)
+        } catch {
+            if cloudSyncEnabled {
+                cloudSyncEnabled = false
+                let localContainer = NSPersistentContainer(name: "Bubu")
+                Self.configureLocalContainer(localContainer, inMemory: inMemory)
+                container = localContainer
+                do {
+                    try Self.loadStores(for: localContainer)
+                } catch {
+                    fatalError("Core Data 加载失败: \(error)")
+                }
+            } else {
+                fatalError("Core Data 加载失败: \(error)")
             }
         }
 
@@ -66,5 +78,114 @@ final class PersistenceManager: ObservableObject {
         folder.createdAt = Date()
 
         save()
+    }
+
+    private static func configureCloudContainer(_ container: NSPersistentCloudKitContainer, inMemory: Bool) {
+        guard let storeDescription = container.persistentStoreDescriptions.first else { return }
+
+        if inMemory {
+            storeDescription.url = URL(fileURLWithPath: "/dev/null")
+        } else {
+            configurePersistentStoreDescription(storeDescription)
+            storeDescription.cloudKitContainerOptions = NSPersistentCloudKitContainerOptions(
+                containerIdentifier: "iCloud.com.bubu.app"
+            )
+        }
+    }
+
+    private static func configureLocalContainer(_ container: NSPersistentContainer, inMemory: Bool) {
+        guard let storeDescription = container.persistentStoreDescriptions.first else { return }
+
+        if inMemory {
+            storeDescription.url = URL(fileURLWithPath: "/dev/null")
+        } else {
+            configurePersistentStoreDescription(storeDescription)
+        }
+    }
+
+    private static func shouldEnableCloudSync(inMemory: Bool) -> Bool {
+        guard !inMemory else { return false }
+
+        #if DEBUG
+        return ProcessInfo.processInfo.environment["BUBU_ENABLE_CLOUDKIT"] != "0"
+        #else
+        return true
+        #endif
+    }
+
+    private static func configurePersistentStoreDescription(_ storeDescription: NSPersistentStoreDescription) {
+        storeDescription.url = storeURL()
+        storeDescription.shouldMigrateStoreAutomatically = true
+        storeDescription.shouldInferMappingModelAutomatically = true
+        storeDescription.setOption(true as NSNumber, forKey: NSPersistentHistoryTrackingKey)
+        storeDescription.setOption(true as NSNumber, forKey: NSPersistentStoreRemoteChangeNotificationPostOptionKey)
+    }
+
+    private static func loadStores(for container: NSPersistentContainer) throws {
+        guard container.persistentStoreDescriptions.first != nil else {
+            throw NSError(domain: "PersistenceManager", code: 1, userInfo: [NSLocalizedDescriptionKey: "未找到持久化存储描述"])
+        }
+
+        var loadError: NSError?
+        container.loadPersistentStores { _, error in
+            loadError = error as NSError?
+        }
+
+        if let loadError {
+            throw loadError
+        }
+    }
+
+    private static func prepareStorageDirectory(inMemory: Bool) throws {
+        guard !inMemory else { return }
+        try FileManager.default.createDirectory(at: storageRootURL(), withIntermediateDirectories: true)
+    }
+
+    private static func storageRootURL() -> URL {
+        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? FileManager.default.temporaryDirectory
+        return base.appendingPathComponent("BubuStorage", isDirectory: true)
+    }
+
+    private static func storeURL() -> URL {
+        storageRootURL().appendingPathComponent("Bubu.sqlite")
+    }
+
+    private static func legacyStoreURL() -> URL {
+        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? FileManager.default.temporaryDirectory
+        return base.appendingPathComponent("Bubu.sqlite")
+    }
+
+    private static func migrateLegacyStoreIfNeeded(inMemory: Bool) throws {
+        guard !inMemory else { return }
+
+        let fileManager = FileManager.default
+        let currentURL = storeURL()
+        let legacyURL = legacyStoreURL()
+
+        guard currentURL.path != legacyURL.path else { return }
+        guard fileManager.fileExists(atPath: legacyURL.path) else { return }
+
+        let currentExists = fileManager.fileExists(atPath: currentURL.path)
+        if currentExists,
+           let attributes = try? fileManager.attributesOfItem(atPath: currentURL.path),
+           let size = attributes[.size] as? NSNumber,
+           size.intValue > 0 {
+            return
+        }
+
+        let relatedExtensions = ["", "-wal", "-shm"]
+        for ext in relatedExtensions {
+            let fromURL = URL(fileURLWithPath: legacyURL.path + ext)
+            let toURL = URL(fileURLWithPath: currentURL.path + ext)
+
+            guard fileManager.fileExists(atPath: fromURL.path) else { continue }
+
+            if fileManager.fileExists(atPath: toURL.path) {
+                try fileManager.removeItem(at: toURL)
+            }
+            try fileManager.copyItem(at: fromURL, to: toURL)
+        }
     }
 }

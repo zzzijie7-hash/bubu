@@ -107,7 +107,7 @@ struct MapPlace: Identifiable, Hashable {
     }
 }
 
-struct ImportablePlace: Identifiable {
+struct ImportablePlace: Identifiable, Equatable {
     let id = UUID()
     let name: String
     let address: String?
@@ -117,6 +117,21 @@ struct ImportablePlace: Identifiable {
     let sourceURL: URL?
     let sourceType: PlaceSourceType
     let note: String?
+
+    static func == (lhs: ImportablePlace, rhs: ImportablePlace) -> Bool {
+        lhs.name == rhs.name &&
+        lhs.address == rhs.address &&
+        lhs.sourceURL == rhs.sourceURL &&
+        lhs.sourceType == rhs.sourceType
+    }
+}
+
+struct ImportCollectionPayload: Equatable {
+    let title: String
+    let sourceType: PlaceSourceType
+    let sourceURL: URL?
+    let items: [ImportablePlace]
+    let summary: String?
 }
 
 struct MapAnnotation: Identifiable {
@@ -153,4 +168,50 @@ struct MapStyleConfig {
     let accentColor: String
     let showTraffic: Bool
     let showBuildings: Bool
+}
+
+// MARK: - 导入预览模型
+
+enum ImportPreviewKind: Equatable {
+    case singlePlace
+    case collection
+}
+
+struct ImportCollectionContext: Equatable {
+    let provider: PlaceSourceType
+    let collectionID: String
+    let pathID: Int?
+    let isCreatorShare: Bool
+}
+
+struct ImportPreview: Identifiable, Equatable {
+    let id = UUID()
+    let kind: ImportPreviewKind
+    let sourceType: PlaceSourceType
+    let sourceURL: URL?
+    let rawText: String
+    let title: String
+    let subtitle: String?
+    let suggestedQuery: String
+    let searchQueries: [String]
+    let candidateAddress: String?
+    let coordinate: CLLocationCoordinate2D?
+    let collectionContext: ImportCollectionContext?
+
+    static func == (lhs: ImportPreview, rhs: ImportPreview) -> Bool {
+        lhs.id == rhs.id
+    }
+}
+
+extension ImportSourceType {
+    var placeSourceType: PlaceSourceType {
+        switch self {
+        case .redbook:
+            return .redbook
+        case .amapFavorite:
+            return .amapFavorite
+        case .url, .screenshot:
+            return .other
+        }
+    }
 }
