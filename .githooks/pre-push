@@ -1,0 +1,18 @@
+#!/bin/sh
+
+branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null)"
+
+if [ "$branch" = "main" ]; then
+  echo ""
+  echo "Bubu collaboration guard"
+  echo "You are trying to push directly from 'main'."
+  echo "Please switch to a feature branch first, for example:"
+  echo "  git checkout -b feature/your-work"
+  echo ""
+  echo "If this push is truly intentional, bypass once with:"
+  echo "  git push --no-verify origin main"
+  echo ""
+  exit 1
+fi
+
+exit 0

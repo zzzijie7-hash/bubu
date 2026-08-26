@@ -34,6 +34,18 @@ git clone git@github.com:zzzijie7-hash/bubu.git
 cd bubu
 ```
 
+### 1.5 安装协作防呆钩子
+
+```bash
+sh scripts/install-git-hooks.sh
+```
+
+这会启用项目内的 `pre-push` 提醒：
+
+- 直接从 `main` push 时会被本地拦下
+- 终端会提醒你先切功能分支
+- 极少数必须直推时，可以手动用 `--no-verify` 绕过
+
 ### 2. 确认当前分支
 
 ```bash
@@ -212,6 +224,13 @@ git checkout feature/saved-main-work
 
 - Restrict direct pushes
 - Require pull request before merging
+- Require at least 1 approval（如果你们希望互相过一眼）
+
+如果你们现在就想先快一点，可以采用这套折中规则：
+
+- GitHub 侧保护 `main`
+- 本地启用 `pre-push` 提醒
+- 真遇到紧急情况，再手动 `--no-verify`
 
 这样就算有人手快，也不容易直接把 `main` 搞乱。
 
