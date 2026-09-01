@@ -56,7 +56,8 @@ final class PlaceRepository: ObservableObject {
         status: PlaceStatus,
         folder: CDFolder?,
         sourceType: PlaceSourceType,
-        sourceURL: URL?
+        sourceURL: URL?,
+        coverImageURL: URL? = nil
     ) -> CDUserPlace {
         // 创建 Place
         let place = CDPlace(context: persistence.viewContext)
@@ -65,6 +66,7 @@ final class PlaceRepository: ObservableObject {
         place.address = address
         place.latitude = latitude
         place.longitude = longitude
+        place.coverImageURL = coverImageURL
         place.createdAt = Date()
         place.updatedAt = Date()
 
@@ -125,7 +127,8 @@ final class PlaceRepository: ObservableObject {
                 status: status,
                 folder: folder,
                 sourceType: place.sourceType,
-                sourceURL: place.sourceURL
+                sourceURL: place.sourceURL,
+                coverImageURL: place.imageURL
             )
             imported += 1
         }
@@ -167,6 +170,18 @@ final class PlaceRepository: ObservableObject {
         return checkIn
     }
 
+    /// 用重新从系统相册选择的原图替换当前 POI 的旧照片，避免旧缩略图继续作为首图。
+    func replacePhotos(_ images: [UIImage], for userPlace: CDUserPlace) {
+        for media in (userPlace.media ?? []).filter({ $0.typeValue == MediaType.photo.rawValue }) {
+            if let url = media.localFileURL {
+                try? FileManager.default.removeItem(at: url)
+            }
+            persistence.viewContext.delete(media)
+        }
+        persistence.save()
+        attachPhotos(images, to: userPlace)
+    }
+
     func attachPhotos(_ images: [UIImage], to checkIn: CDCheckIn, userPlace: CDUserPlace) {
         guard !images.isEmpty else { return }
 
@@ -174,7 +189,7 @@ final class PlaceRepository: ObservableObject {
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
 
         for (index, image) in images.enumerated() {
-            guard let jpegData = image.jpegData(compressionQuality: 0.82) else { continue }
+            guard let jpegData = image.jpegData(compressionQuality: 0.98) else { continue }
             let media = CDMedia(context: persistence.viewContext)
             media.id = UUID()
             media.typeValue = MediaType.photo.rawValue
@@ -203,7 +218,7 @@ final class PlaceRepository: ObservableObject {
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
 
         for (index, image) in images.enumerated() {
-            guard let jpegData = image.jpegData(compressionQuality: 0.82) else { continue }
+            guard let jpegData = image.jpegData(compressionQuality: 0.98) else { continue }
             let media = CDMedia(context: persistence.viewContext)
             media.id = UUID()
             media.typeValue = MediaType.photo.rawValue
