@@ -4,6 +4,7 @@ import UIKit
 import Combine
 import PhotosUI
 import AVFoundation
+import MapKit
 
 @main
 struct BubuApp: App {
@@ -158,8 +159,6 @@ struct MainTabView: View {
                 initialImportPreview: pendingImportPreview,
                 initialMatchedPlace: pendingMatchedPlace
             )
-            .presentationDetents([.medium, .large])
-            .presentationDragIndicator(.visible)
         }
         .sheet(item: $selectedClipboardCollectionPreview) { preview in
             CollectionImportSheet(preview: preview)
@@ -503,6 +502,9 @@ struct AddPlaceSearchSheet: View {
     @State private var query = ""
     @State private var results: [MapPlace] = []
     @State private var isSearching = false
+    @State private var hasSearched = false
+    @State private var isCreatingManualPlace = false
+    @State private var presentationDetent: PresentationDetent = .medium
     @State private var activeImportPreview: ImportPreview?
     @State private var importMessage: String?
     @State private var selectedCollectionPreview: ImportPreview?
@@ -543,19 +545,48 @@ struct AddPlaceSearchSheet: View {
                         .padding(.top, 16)
                         .padding(.bottom, 24)
                     }
+                } else if isCreatingManualPlace {
+                    ScrollView(showsIndicators: false) {
+                        ManualPlaceCreatorContent(
+                            initialName: query,
+                            coordinate: mapSearchCenter,
+                            onCreate: { place in
+                                isCreatingManualPlace = false
+                                expandingPlace = place
+                                resetMemoryInputs()
+                            }
+                        )
+                        .padding(.horizontal, 16)
+                        .padding(.top, 12)
+                        .padding(.bottom, 24)
+                    }
                 } else {
                     searchContent
                 }
             }
             .background(BubuTheme.Surface.space)
-            .navigationTitle(shouldShowLightingFlow ? "" : (initialImportPreview == nil ? "添加地点" : "点亮这个地点"))
+            .navigationTitle(
+                shouldShowLightingFlow ? "" :
+                    (isCreatingManualPlace ? "创建地点" : (initialImportPreview == nil ? "添加地点" : "点亮这个地点"))
+            )
             .navigationBarTitleDisplayMode(.inline)
             .toolbar(shouldShowLightingFlow ? .hidden : .visible, for: .navigationBar)
             .toolbar {
                 if !shouldShowLightingFlow {
-                    ToolbarItem(placement: .cancellationAction) { Button("完成") { dismiss() } }
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button(isCreatingManualPlace ? "返回" : "完成") {
+                            if isCreatingManualPlace {
+                                isCreatingManualPlace = false
+                                presentationDetent = .medium
+                            } else {
+                                dismiss()
+                            }
+                        }
+                    }
                 }
             }
+            .presentationDetents([.medium, .large], selection: $presentationDetent)
+            .presentationDragIndicator(.visible)
             .task {
                 guard let initialImportPreview else { return }
                 await MainActor.run {
@@ -590,17 +621,16 @@ struct AddPlaceSearchSheet: View {
         let q = query.trimmingCharacters(in: .whitespaces)
         guard !q.isEmpty else { return }
         isSearching = true
+        hasSearched = true
+        isCreatingManualPlace = false
         expandingPlace = nil
         activeImportPreview = nil
         importMessage = nil
-        let center = appState.mapSearchCenter
-            ?? container.locationManager.currentLocation?.coordinate
-            ?? CLLocationCoordinate2D(latitude: 31.215070, longitude: 121.474434)
         Task {
             do {
                 results = try await container.mapService.searchPlaces(
                     query: q,
-                    region: MapRegion(center: center, radius: 30000),
+                    region: MapRegion(center: mapSearchCenter, radius: 30000),
                     filters: nil
                 )
             } catch { results = [] }
@@ -757,6 +787,7 @@ struct AddPlaceSearchSheet: View {
                     query = ""
                     results = []
                     expandingPlace = nil
+                    hasSearched = false
                 } label: {
                     Image(systemName: "xmark.circle.fill")
                         .font(.system(size: 14))
@@ -811,7 +842,7 @@ struct AddPlaceSearchSheet: View {
                 }
                 .padding(.horizontal, 16)
             }
-        } else if results.isEmpty && !query.isEmpty {
+        } else if results.isEmpty && hasSearched && !query.isEmpty {
             VStack(spacing: 12) {
                 Spacer().frame(height: 60)
                 Image(systemName: "magnifyingglass")
@@ -819,7 +850,21 @@ struct AddPlaceSearchSheet: View {
                     .foregroundStyle(BubuTheme.Text.tertiary)
                 Text("没有找到「\(query)」")
                     .font(BubuFont.titleSM).foregroundStyle(BubuTheme.Text.secondary)
-                Text("换个关键词试试").font(BubuFont.caption).foregroundStyle(BubuTheme.Text.tertiary)
+                Text("没搜到？也可以自己创建一个地点")
+                    .font(BubuFont.caption)
+                    .foregroundStyle(BubuTheme.Text.tertiary)
+                Button {
+                    isCreatingManualPlace = true
+                    presentationDetent = .large
+                } label: {
+                    Label("创建地点", systemImage: "plus")
+                        .font(BubuFont.titleSM)
+                        .foregroundStyle(BubuTheme.Surface.space)
+                        .padding(.horizontal, 20)
+                        .padding(.vertical, 12)
+                        .background(BubuTheme.Primary.green)
+                        .clipShape(Capsule())
+                }
                 Spacer()
             }
             .frame(maxWidth: .infinity)
@@ -847,6 +892,12 @@ struct AddPlaceSearchSheet: View {
         recordedVoiceMemo = nil
     }
 
+    private var mapSearchCenter: CLLocationCoordinate2D {
+        appState.mapSearchCenter
+            ?? container.locationManager.currentLocation?.coordinate
+            ?? CLLocationCoordinate2D(latitude: 31.215070, longitude: 121.474434)
+    }
+
     @MainActor
     private func loadSelectedImages(from items: [PhotosPickerItem]) async {
         guard !items.isEmpty else {
@@ -862,6 +913,217 @@ struct AddPlaceSearchSheet: View {
             }
         }
         selectedImages = loaded
+    }
+}
+
+private struct ManualPlaceCreatorContent: View {
+    let initialName: String
+    let onCreate: (MapPlace) -> Void
+
+    @EnvironmentObject private var container: AppContainer
+    @State private var name = ""
+    @State private var address = ""
+    @State private var selectedCoordinate: CLLocationCoordinate2D
+    @State private var mapCamera: MapCameraPosition
+    @State private var isReadingClipboard = false
+    @State private var clipboardMessage: String?
+
+    init(
+        initialName: String,
+        coordinate: CLLocationCoordinate2D,
+        onCreate: @escaping (MapPlace) -> Void
+    ) {
+        self.initialName = initialName
+        self.onCreate = onCreate
+        _selectedCoordinate = State(initialValue: coordinate)
+        _mapCamera = State(
+            initialValue: .region(
+                MKCoordinateRegion(
+                    center: coordinate,
+                    latitudinalMeters: 1_000,
+                    longitudinalMeters: 1_000
+                )
+            )
+        )
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            HStack(spacing: 12) {
+                ZStack {
+                    Circle()
+                        .fill(BubuTheme.Primary.green.opacity(0.16))
+                        .frame(width: 42, height: 42)
+                    Image(systemName: "mappin.and.ellipse")
+                        .font(.system(size: 18, weight: .medium))
+                        .foregroundStyle(BubuTheme.Primary.green)
+                }
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("创建地点")
+                        .font(BubuFont.titleMD)
+                        .foregroundStyle(BubuTheme.Text.ink)
+                    Text("地图暂时没有收录也没关系")
+                        .font(BubuFont.caption)
+                        .foregroundStyle(BubuTheme.Text.secondary)
+                }
+
+            }
+
+            VStack(spacing: 10) {
+                TextField("地点名称", text: $name)
+                    .font(BubuFont.body)
+                    .foregroundStyle(BubuTheme.Text.ink)
+                    .padding(.horizontal, 14)
+                    .frame(height: 50)
+                    .background(BubuTheme.Surface.surface1)
+                    .clipShape(RoundedRectangle(cornerRadius: BubuRadius.md, style: .continuous))
+
+                TextField("地址（可选）", text: $address)
+                    .font(BubuFont.body)
+                    .foregroundStyle(BubuTheme.Text.ink)
+                    .padding(.horizontal, 14)
+                    .frame(height: 50)
+                    .background(BubuTheme.Surface.surface1)
+                    .clipShape(RoundedRectangle(cornerRadius: BubuRadius.md, style: .continuous))
+            }
+
+            Button {
+                readClipboard()
+            } label: {
+                HStack(spacing: 8) {
+                    if isReadingClipboard {
+                        ProgressView().tint(BubuTheme.Primary.green)
+                    } else {
+                        Image(systemName: "doc.on.clipboard")
+                            .font(.system(size: 14, weight: .medium))
+                    }
+                    Text(isReadingClipboard ? "正在识别剪贴板" : "从剪贴板带入地点信息")
+                        .font(BubuFont.caption)
+                    Spacer()
+                }
+                .foregroundStyle(BubuTheme.Primary.green)
+                .padding(.horizontal, 14)
+                .frame(height: 42)
+                .background(BubuTheme.Primary.green.opacity(0.10))
+                .clipShape(RoundedRectangle(cornerRadius: BubuRadius.md, style: .continuous))
+            }
+            .disabled(isReadingClipboard)
+
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Text("拖动地图，标记大概位置")
+                        .font(BubuFont.caption)
+                        .foregroundStyle(BubuTheme.Text.secondary)
+                    Spacer()
+                    if let clipboardMessage {
+                        Text(clipboardMessage)
+                            .font(.system(size: 11))
+                            .foregroundStyle(BubuTheme.Text.tertiary)
+                            .lineLimit(1)
+                    }
+                }
+
+                ZStack {
+                    Map(position: $mapCamera, interactionModes: [.pan, .zoom])
+                        .mapStyle(.standard(elevation: .flat, emphasis: .muted, pointsOfInterest: .excludingAll, showsTraffic: false))
+                        .allowsHitTesting(true)
+                        .onMapCameraChange(frequency: .onEnd) { context in
+                            selectedCoordinate = context.region.center
+                        }
+
+                    VStack(spacing: 0) {
+                        Image(systemName: "mappin.circle.fill")
+                            .font(.system(size: 31))
+                            .foregroundStyle(BubuTheme.Primary.green)
+                            .shadow(color: .black.opacity(0.22), radius: 5, y: 3)
+                        Circle()
+                            .fill(BubuTheme.Primary.green.opacity(0.28))
+                            .frame(width: 18, height: 5)
+                            .blur(radius: 3)
+                    }
+                    .allowsHitTesting(false)
+                    .offset(y: -14)
+                }
+                .frame(height: 128)
+                .clipShape(RoundedRectangle(cornerRadius: BubuRadius.md, style: .continuous))
+            }
+
+            Button {
+                let trimmedAddress = address.trimmingCharacters(in: .whitespacesAndNewlines)
+                onCreate(
+                    MapPlace(
+                        id: "manual_\(UUID().uuidString)",
+                        name: trimmedName,
+                        address: trimmedAddress.isEmpty ? nil : trimmedAddress,
+                        coordinate: selectedCoordinate,
+                        poiID: nil,
+                        category: nil,
+                        phone: nil,
+                        coverImageURL: nil,
+                        rating: nil,
+                        distance: nil
+                    )
+                )
+            } label: {
+                Text("继续标记")
+                    .font(BubuFont.titleSM)
+                    .foregroundStyle(BubuTheme.Surface.space)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 52)
+                    .background(BubuTheme.Primary.green)
+                    .clipShape(Capsule())
+            }
+            .disabled(trimmedName.isEmpty)
+            .opacity(trimmedName.isEmpty ? 0.42 : 1)
+
+            Spacer(minLength: 0)
+        }
+        .padding(20)
+        .background(BubuTheme.Surface.space)
+        .onAppear { name = initialName }
+    }
+
+    private var trimmedName: String {
+        name.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func readClipboard() {
+        guard let text = UIPasteboard.general.string?
+            .trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else {
+            clipboardMessage = "剪贴板里没有可识别文字"
+            return
+        }
+
+        isReadingClipboard = true
+        clipboardMessage = nil
+        Task {
+            let preview = await container.importService.detectClipboardPreview(from: text)
+            await MainActor.run {
+                if let preview {
+                    if name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || name == initialName {
+                        name = preview.title
+                    }
+                    if let candidateAddress = preview.candidateAddress, !candidateAddress.isEmpty {
+                        address = candidateAddress
+                    }
+                    if let coordinate = preview.coordinate {
+                        selectedCoordinate = coordinate
+                        mapCamera = .region(
+                            MKCoordinateRegion(
+                                center: coordinate,
+                                latitudinalMeters: 1_000,
+                                longitudinalMeters: 1_000
+                            )
+                        )
+                    }
+                    clipboardMessage = "已带入地点信息"
+                } else {
+                    clipboardMessage = "没有识别出地点信息"
+                }
+                isReadingClipboard = false
+            }
+        }
     }
 }
 
