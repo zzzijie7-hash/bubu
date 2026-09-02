@@ -6,6 +6,7 @@ import AVFoundation
 
 struct MyPageView: View {
     @EnvironmentObject var container: AppContainer
+    @AppStorage("bubu.profile.nickname") private var nickname = "脸红加速度"
 
     @State private var selectedTab: MyArchiveTab = .cityImprints
     @State private var stats = UserStats.empty
@@ -21,6 +22,9 @@ struct MyPageView: View {
     @State private var backgroundPickerItem: PhotosPickerItem?
     @State private var showingAvatarPicker = false
     @State private var showingBackgroundPicker = false
+    @State private var showingAvatarPreview = false
+    @State private var showingBackgroundPreview = false
+    @State private var showingNicknameEditor = false
     @State private var currentFocusCoordinate: CLLocationCoordinate2D?
 
     var body: some View {
@@ -63,8 +67,99 @@ struct MyPageView: View {
             .confirmationDialog("更多", isPresented: $showingMenu, titleVisibility: .hidden) {
                 Button("更换头像") { showingAvatarPicker = true }
                 Button("更换背景图") { showingBackgroundPicker = true }
+                Button("修改昵称") { showingNicknameEditor = true }
                 Button("导入记录") {}
                 Button("取消", role: .cancel) {}
+            }
+            .sheet(isPresented: $showingNicknameEditor) {
+                NicknameEditorView(nickname: $nickname)
+                    .presentationDetents([.height(220)])
+            }
+            .fullScreenCover(isPresented: $showingAvatarPreview) {
+                ZStack(alignment: .topTrailing) {
+                    BubuTheme.Surface.space
+                        .ignoresSafeArea()
+
+                    VStack(spacing: 0) {
+                        Spacer()
+                        avatarPreviewArtwork
+                        Spacer()
+
+                        Button {
+                            showingAvatarPreview = false
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                                showingAvatarPicker = true
+                            }
+                        } label: {
+                            Text("更换头像")
+                                .font(BubuFont.titleSM)
+                                .foregroundStyle(BubuTheme.Text.onPrimary)
+                                .frame(maxWidth: .infinity)
+                                .frame(height: 50)
+                                .background(BubuTheme.Primary.green)
+                                .clipShape(Capsule())
+                        }
+                        .buttonStyle(.plain)
+                        .padding(.horizontal, 24)
+                        .padding(.bottom, 18)
+                    }
+
+                    Button {
+                        showingAvatarPreview = false
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(BubuTheme.Text.ink)
+                            .frame(width: 38, height: 38)
+                            .background { BubuGlassCircle() }
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.top, 16)
+                    .padding(.trailing, 16)
+                }
+            }
+            .fullScreenCover(isPresented: $showingBackgroundPreview) {
+                ZStack(alignment: .topTrailing) {
+                    BubuTheme.Surface.space
+                        .ignoresSafeArea()
+
+                    VStack(spacing: 0) {
+                        Spacer()
+                        backgroundPreviewArtwork
+                        Spacer()
+
+                        Button {
+                            showingBackgroundPreview = false
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                                showingBackgroundPicker = true
+                            }
+                        } label: {
+                            Text("更换背景图")
+                                .font(BubuFont.titleSM)
+                                .foregroundStyle(BubuTheme.Text.onPrimary)
+                                .frame(maxWidth: .infinity)
+                                .frame(height: 50)
+                                .background(BubuTheme.Primary.green)
+                                .clipShape(Capsule())
+                        }
+                        .buttonStyle(.plain)
+                        .padding(.horizontal, 24)
+                        .padding(.bottom, 18)
+                    }
+
+                    Button {
+                        showingBackgroundPreview = false
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(BubuTheme.Text.ink)
+                            .frame(width: 38, height: 38)
+                            .background { BubuGlassCircle() }
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.top, 16)
+                    .padding(.trailing, 16)
+                }
             }
             .photosPicker(isPresented: $showingAvatarPicker, selection: $avatarPickerItem, matching: .images)
             .photosPicker(isPresented: $showingBackgroundPicker, selection: $backgroundPickerItem, matching: .images)
@@ -120,7 +215,7 @@ struct MyPageView: View {
                 }
                 .contentShape(RoundedRectangle(cornerRadius: 34, style: .continuous))
                 .onTapGesture {
-                    showingBackgroundPicker = true
+                    showingBackgroundPreview = true
                 }
 
             VStack(spacing: 0) {
@@ -150,9 +245,15 @@ struct MyPageView: View {
                             .foregroundStyle(.white)
 
                         HStack(spacing: 14) {
-                            archiveStat(value: "\(stats.placesVisited)", label: "去过")
-                            archiveStat(value: "\(stats.placesWanted)", label: "想去")
-                            archiveStat(value: "\(stats.citiesVisited)", label: "城市")
+                            archiveStat(value: "\(stats.placesVisited)", label: "去过") {
+                                ProfilePlaceListView(mode: .visited)
+                            }
+                            archiveStat(value: "\(stats.placesWanted)", label: "想去") {
+                                ProfilePlaceListView(mode: .wanted)
+                            }
+                            archiveStat(value: "\(stats.citiesVisited)", label: "城市") {
+                                CityIndexView(cities: cities)
+                            }
                         }
                     }
                     Spacer(minLength: 0)
@@ -301,7 +402,7 @@ struct MyPageView: View {
 
     private func avatarButton(size: CGFloat) -> some View {
         Button {
-            showingAvatarPicker = true
+            showingAvatarPreview = true
         } label: {
             avatarArtwork(size: size)
         }
@@ -331,19 +432,66 @@ struct MyPageView: View {
         .clipShape(RoundedRectangle(cornerRadius: size * 0.3, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: size * 0.3, style: .continuous)
-                .stroke(.white.opacity(0.9), lineWidth: 4)
+                .stroke(.white.opacity(0.9), lineWidth: 2)
         )
     }
 
-    private func archiveStat(value: String, label: String) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(value)
-                .font(.system(size: 17, weight: .bold, design: .rounded))
-                .foregroundStyle(.white)
-            Text(label)
-                .font(BubuFont.caption)
-                .foregroundStyle(.white.opacity(0.66))
+    private var avatarPreviewArtwork: some View {
+        Group {
+            if let avatarImage {
+                Image(uiImage: avatarImage)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(maxWidth: .infinity)
+            } else {
+                ZStack {
+                    LinearGradient(
+                        colors: [Color(hex: "D9DCE5"), Color(hex: "8D93A7")],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                    Image(systemName: "person.fill")
+                        .font(.system(size: 104, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.9))
+                }
+                .frame(maxWidth: .infinity)
+                .frame(height: 360)
+            }
         }
+    }
+
+    private var backgroundPreviewArtwork: some View {
+        Group {
+            if let backgroundImage {
+                Image(uiImage: backgroundImage)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(maxWidth: .infinity)
+            } else {
+                heroBackground
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 360)
+            }
+        }
+    }
+
+    private func archiveStat<Destination: View>(value: String, label: String, @ViewBuilder destination: () -> Destination) -> some View {
+        NavigationLink {
+            destination()
+        } label: {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(value)
+                    .font(.system(size: 17, weight: .bold, design: .rounded))
+                    .foregroundStyle(.white)
+                Text(label)
+                    .font(BubuFont.caption)
+                    .foregroundStyle(.white.opacity(0.72))
+            }
+            .padding(.horizontal, 6)
+            .padding(.vertical, 8)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 
     private func archiveTabButton(_ tab: MyArchiveTab, title: String) -> some View {
@@ -405,7 +553,7 @@ struct MyPageView: View {
     }
 
     private var primaryCityName: String {
-        cities.first?.name ?? "步步"
+        nickname
     }
 
     private func reloadArchive() {
@@ -446,6 +594,435 @@ struct MyPageView: View {
             case .avatar: avatarImage = prepared
             case .background: backgroundImage = prepared
             }
+        }
+    }
+}
+
+private struct NicknameEditorView: View {
+    @Environment(\.dismiss) private var dismiss
+    @Binding var nickname: String
+    @State private var draft: String
+
+    init(nickname: Binding<String>) {
+        _nickname = nickname
+        _draft = State(initialValue: nickname.wrappedValue)
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("昵称") {
+                    TextField("输入昵称", text: $draft)
+                        .textInputAutocapitalization(.never)
+                }
+            }
+            .navigationTitle("修改昵称")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("取消") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("保存") {
+                        let trimmed = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+                        if !trimmed.isEmpty {
+                            nickname = trimmed
+                        }
+                        dismiss()
+                    }
+                    .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
+        }
+    }
+}
+
+private enum ProfilePlaceListMode {
+    case visited
+    case wanted
+
+    var title: String {
+        switch self {
+        case .visited: return "去过"
+        case .wanted: return "想去"
+        }
+    }
+
+    var status: PlaceStatus {
+        switch self {
+        case .visited: return .visitedGood
+        case .wanted: return .wantToGo
+        }
+    }
+}
+
+private struct ProfilePlaceListView: View {
+    @EnvironmentObject private var container: AppContainer
+    @Environment(\.dismiss) private var dismiss
+    let mode: ProfilePlaceListMode
+
+    @State private var places: [CDUserPlace] = []
+    @State private var editingPlace: CDUserPlace?
+    @State private var deletingPlace: CDUserPlace?
+
+    private var filteredPlaces: [CDUserPlace] {
+        places.filter { userPlace in
+            mode == .wanted
+                ? userPlace.statusValue == PlaceStatus.wantToGo.rawValue
+                : userPlace.statusValue != PlaceStatus.wantToGo.rawValue
+        }
+    }
+
+    var body: some View {
+        ZStack {
+            BubuTheme.Surface.space
+                .ignoresSafeArea()
+
+            ScrollView(showsIndicators: false) {
+                LazyVStack(spacing: 12) {
+                    if filteredPlaces.isEmpty {
+                        VStack(spacing: 12) {
+                            Image(systemName: mode == .wanted ? "bookmark" : "checkmark.circle")
+                                .font(.system(size: 28, weight: .semibold))
+                                .foregroundStyle(BubuTheme.Primary.green)
+                            Text(mode == .wanted ? "还没有想去的地点" : "还没有去过的地点")
+                                .font(BubuFont.titleLG)
+                                .foregroundStyle(BubuTheme.Text.ink)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 80)
+                    } else {
+                        ForEach(filteredPlaces, id: \.objectID) { place in
+                            Button {
+                                editingPlace = place
+                            } label: {
+                                ProfilePOICard(userPlace: place, mode: mode)
+                            }
+                            .buttonStyle(.plain)
+                            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                                Button(role: .destructive) {
+                                    deletingPlace = place
+                                } label: {
+                                    Label("删除", systemImage: "trash")
+                                }
+
+                                if mode == .wanted {
+                                    Button {
+                                        editingPlace = place
+                                    } label: {
+                                        Label("去过", systemImage: "checkmark")
+                                    }
+                                    .tint(BubuTheme.Primary.green)
+                                }
+                            }
+                        }
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, 16)
+                .padding(.bottom, 32)
+            }
+        }
+        .safeAreaInset(edge: .top, spacing: 0) {
+            ProfileBackHeader(title: mode.title) { dismiss() }
+        }
+        .onAppear { reload() }
+        .onChange(of: editingPlace) { _, newPlace in
+            if newPlace == nil { reload() }
+        }
+        .sheet(item: $editingPlace) { place in
+            ProfilePlaceEditorSheet(userPlace: place) {
+                reload()
+            }
+        }
+        .alert("删除这个地点？", isPresented: Binding(
+            get: { deletingPlace != nil },
+            set: { if !$0 { deletingPlace = nil } }
+        )) {
+            Button("删除", role: .destructive) {
+                if let deletingPlace {
+                    container.placeRepository.deleteUserPlace(deletingPlace)
+                    reload()
+                }
+                deletingPlace = nil
+            }
+            Button("取消", role: .cancel) { deletingPlace = nil }
+        } message: {
+            Text("删除后，这个地点及其记录将从个人页移除。")
+        }
+        .toolbar(.hidden, for: .navigationBar)
+    }
+
+    private func reload() {
+        places = container.placeRepository.fetchUserPlaces()
+    }
+}
+
+private struct CityIndexView: View {
+    @Environment(\.dismiss) private var dismiss
+    let cities: [CityMemorySummary]
+
+    var body: some View {
+        ZStack {
+            BubuTheme.Surface.space
+                .ignoresSafeArea()
+
+            ScrollView(showsIndicators: false) {
+                LazyVStack(spacing: 16) {
+                    ForEach(cities) { city in
+                        NavigationLink {
+                            CityGalleryView(city: city)
+                        } label: {
+                            CityPostcardCard(city: city)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, 16)
+                .padding(.bottom, 32)
+            }
+        }
+        .safeAreaInset(edge: .top, spacing: 0) {
+            ProfileBackHeader(title: "城市") { dismiss() }
+        }
+        .toolbar(.hidden, for: .navigationBar)
+    }
+}
+
+private struct ProfileBackHeader: View {
+    let title: String
+    let action: () -> Void
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Button(action: action) {
+                Image(systemName: "chevron.left")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(BubuTheme.Text.ink)
+                    .frame(width: 38, height: 38)
+                    .background { BubuGlassCircle() }
+            }
+            .buttonStyle(.plain)
+
+            Text(title)
+                .font(BubuFont.titleMD)
+                .foregroundStyle(BubuTheme.Text.ink)
+
+            Spacer()
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+    }
+}
+
+private struct ProfilePOICard: View {
+    let userPlace: CDUserPlace
+    let mode: ProfilePlaceListMode
+
+    var body: some View {
+        HStack(spacing: 14) {
+            cover
+                .frame(width: 96, height: 96)
+                .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+
+            VStack(alignment: .leading, spacing: 7) {
+                Text(userPlace.place?.name ?? "未命名地点")
+                    .font(BubuFont.titleMD)
+                    .foregroundStyle(BubuTheme.Text.ink)
+                    .lineLimit(2)
+
+                if let address = userPlace.place?.address, !address.isEmpty {
+                    Text(address)
+                        .font(BubuFont.caption)
+                        .foregroundStyle(BubuTheme.Text.secondary)
+                        .lineLimit(2)
+                }
+
+                HStack(spacing: 8) {
+                    Label(mode == .wanted ? "想去" : "去过", systemImage: mode == .wanted ? "bookmark.fill" : "checkmark.circle.fill")
+                        .font(BubuFont.caption)
+                        .foregroundStyle(mode == .wanted ? BubuTheme.Text.secondary : BubuTheme.Primary.green)
+
+                    if mode == .wanted {
+                        Text("点击补充记录")
+                            .font(BubuFont.caption)
+                            .foregroundStyle(BubuTheme.Text.tertiary)
+                    }
+                }
+            }
+
+            Spacer(minLength: 0)
+            Image(systemName: "chevron.right")
+                .font(.caption)
+                .foregroundStyle(BubuTheme.Text.tertiary)
+        }
+        .padding(14)
+        .background(BubuTheme.Surface.surface1)
+        .clipShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
+    }
+
+    @ViewBuilder
+    private var cover: some View {
+        if let coverImageURL = userPlace.place?.coverImageURL {
+            AsyncImage(url: coverImageURL) { image in
+                image
+                .resizable()
+                .scaledToFill()
+            } placeholder: {
+                poiIconPlaceholder
+            }
+        } else {
+            poiIconPlaceholder
+        }
+    }
+
+    private var poiIconPlaceholder: some View {
+        ZStack {
+            BubuTheme.Surface.surface2
+            Image(systemName: "mappin.and.ellipse")
+                .font(.system(size: 26, weight: .medium))
+                .foregroundStyle(BubuTheme.Primary.green)
+        }
+    }
+}
+
+private struct ProfilePlaceEditorSheet: View {
+    @EnvironmentObject private var container: AppContainer
+    @EnvironmentObject private var appState: AppState
+    @Environment(\.dismiss) private var dismiss
+
+    let userPlace: CDUserPlace
+    let onSaved: () -> Void
+
+    @State private var lightingMode: LightingMode
+    @State private var visitedMood: VisitedMood?
+    @State private var noteText: String
+    @State private var visitDate: Date
+    @State private var selectedPhotoItems: [PhotosPickerItem] = []
+    @State private var selectedImages: [UIImage] = []
+    @State private var recordedVoiceMemo: RecordedVoiceMemo?
+    @State private var isSaving = false
+    @State private var showingDeleteConfirmation = false
+
+    init(userPlace: CDUserPlace, onSaved: @escaping () -> Void) {
+        self.userPlace = userPlace
+        self.onSaved = onSaved
+        let status = PlaceStatus(rawValue: userPlace.statusValue) ?? .wantToGo
+        _lightingMode = State(initialValue: status == .wantToGo ? .wantToGo : .visited)
+        _visitedMood = State(initialValue: {
+            switch userPlace.mood {
+            case MoodTag.happy.rawValue: return .good
+            case MoodTag.disappointed.rawValue: return .bad
+            case MoodTag.calm.rawValue: return .neutral
+            default: return nil
+            }
+        }())
+        _noteText = State(initialValue: userPlace.reviewText ?? "")
+        _visitDate = State(initialValue: userPlace.visitDate ?? Date())
+    }
+
+    private var mapPlace: MapPlace {
+        MapPlace(
+            id: userPlace.place?.id?.uuidString ?? userPlace.objectID.uriRepresentation().absoluteString,
+            name: userPlace.place?.name ?? "未命名地点",
+            address: userPlace.place?.address,
+            coordinate: CLLocationCoordinate2D(
+                latitude: userPlace.place?.latitude ?? 0,
+                longitude: userPlace.place?.longitude ?? 0
+            ),
+            poiID: userPlace.place?.poiID,
+            category: userPlace.place?.categoryName,
+            phone: userPlace.place?.phone,
+            coverImageURL: userPlace.place?.coverImageURL,
+            rating: nil,
+            distance: nil
+        )
+    }
+
+    var body: some View {
+        NavigationStack {
+            ScrollView(showsIndicators: false) {
+                PlaceMemoryComposerCard(
+                    place: mapPlace,
+                    lightingMode: $lightingMode,
+                    visitedMood: $visitedMood,
+                    noteText: $noteText,
+                    visitDate: $visitDate,
+                    selectedPhotoItems: $selectedPhotoItems,
+                    selectedImages: $selectedImages,
+                    recordedVoiceMemo: $recordedVoiceMemo,
+                    isSaving: isSaving,
+                    checkInCount: userPlace.checkIns?.count ?? 0,
+                    canChangeMode: true,
+                    actionTitle: "保存修改",
+                    onSubmit: save
+                )
+                .padding(.horizontal, 16)
+                .padding(.top, 16)
+                .padding(.bottom, 24)
+            }
+            .background(BubuTheme.Surface.space)
+            .navigationTitle("编辑地点")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("取消") { dismiss() }
+                }
+                ToolbarItem(placement: .destructiveAction) {
+                    Button(role: .destructive) {
+                        showingDeleteConfirmation = true
+                    } label: {
+                        Image(systemName: "trash")
+                    }
+                }
+            }
+            .alert("删除这个地点？", isPresented: $showingDeleteConfirmation) {
+                Button("删除", role: .destructive) {
+                    container.placeRepository.deleteUserPlace(userPlace)
+                    appState.mapRefreshTrigger += 1
+                    onSaved()
+                    dismiss()
+                }
+                Button("取消", role: .cancel) {}
+            }
+        }
+    }
+
+    private func save() {
+        isSaving = true
+        let status: PlaceStatus = lightingMode == .wantToGo
+            ? .wantToGo
+            : moodStatus(for: visitedMood)
+        container.placeRepository.updateMark(
+            userPlace: userPlace,
+            status: status,
+            mood: moodTag(for: visitedMood),
+            note: noteText.isEmpty ? nil : noteText,
+            visitDate: visitDate,
+            images: selectedImages,
+            voiceMemoURL: recordedVoiceMemo?.fileURL
+        )
+        appState.mapRefreshTrigger += 1
+        onSaved()
+        isSaving = false
+        dismiss()
+    }
+
+    private func moodStatus(for mood: VisitedMood?) -> PlaceStatus {
+        switch mood {
+        case .good: return .visitedGood
+        case .bad: return .visitedBad
+        case .neutral, .none: return .visitedNeutral
+        }
+    }
+
+    private func moodTag(for mood: VisitedMood?) -> MoodTag? {
+        switch mood {
+        case .good: return .happy
+        case .bad: return .disappointed
+        case .neutral: return .calm
+        case .none: return nil
         }
     }
 }
@@ -794,7 +1371,14 @@ private struct CityPostcardCard: View {
 
 private struct CityGalleryView: View {
     let city: CityMemorySummary
+    @EnvironmentObject private var container: AppContainer
+    @EnvironmentObject private var appState: AppState
+    @Environment(\.dismiss) private var dismiss
     @State private var selectedEntryID: UUID?
+    @State private var railScrollID: UUID?
+    @State private var showingRecoveryPicker = false
+    @State private var recoveryPickerItem: PhotosPickerItem?
+    @State private var recoveryImage: UIImage?
     @StateObject private var audioPlayer = AudioPreviewPlayer()
 
     var body: some View {
@@ -802,68 +1386,139 @@ private struct CityGalleryView: View {
             BubuTheme.Surface.space
                 .ignoresSafeArea()
 
-            ScrollView(showsIndicators: false) {
-                VStack(spacing: 22) {
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text(city.name)
-                            .font(.system(size: 28, weight: .medium, design: .serif))
-                            .foregroundStyle(BubuTheme.Text.ink)
-
-                        Text(cityPoem)
-                            .font(.system(size: 18, weight: .regular, design: .serif))
-                            .foregroundStyle(BubuTheme.Text.secondary)
-                            .lineSpacing(8)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 20)
-                    .padding(.top, 18)
-
-                    galleryCanvas
-                        .padding(.horizontal, 16)
-
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text("地点轨道")
-                            .font(.system(size: 13, weight: .medium, design: .rounded))
-                            .foregroundStyle(BubuTheme.Text.tertiary)
-                            .padding(.horizontal, 20)
-
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            HStack(alignment: .top, spacing: 14) {
-                                ForEach(city.entries) { entry in
-                                    Button {
-                                        withAnimation(.spring(duration: 0.28)) {
-                                            selectedEntryID = entry.id
-                                        }
-                                    } label: {
-                                        CityGalleryRailItem(
-                                            entry: entry,
-                                            isSelected: selectedEntry?.id == entry.id,
-                                            fallbackImage: city.heroImage
-                                        )
-                                    }
-                                    .buttonStyle(.plain)
-                                }
-                            }
-                            .padding(.horizontal, 20)
-                            .padding(.bottom, 8)
-                        }
-                    }
-                }
-                .padding(.bottom, 32)
+            VStack(spacing: 16) {
+                galleryCanvas
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .padding(.horizontal, 16)
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .padding(.bottom, 16)
+        }
+        .safeAreaInset(edge: .top, spacing: 0) {
+            ZStack {
+                Text(city.name)
+                    .font(.system(size: 18, weight: .semibold, design: .serif))
+                    .foregroundStyle(BubuTheme.Text.ink)
+
+                HStack {
+                    Button {
+                        dismiss()
+                    } label: {
+                        Image(systemName: "chevron.left")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(BubuTheme.Text.ink)
+                            .frame(width: 38, height: 38)
+                            .background { BubuGlassCircle() }
+                            .clipShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+
+                    Spacer()
+                }
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
+        }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            memoryRail
+                .padding(.bottom, 0)
+                .background(BubuTheme.Surface.space)
         }
         .onAppear {
-            selectedEntryID = selectedEntryID ?? city.entries.first?.id
+            appState.hidesFloatingTabBar = true
+            selectedEntryID = city.entries.first?.id
         }
         .onDisappear {
+            appState.hidesFloatingTabBar = false
             audioPlayer.stop()
         }
         .toolbar(.hidden, for: .navigationBar)
+        .photosPicker(isPresented: $showingRecoveryPicker, selection: $recoveryPickerItem, matching: .images)
+        .onChange(of: recoveryPickerItem) { _, newValue in
+            guard let newValue else { return }
+            Task { await recoverOriginal(from: newValue) }
+        }
     }
 
     private var selectedEntry: CityMemoryEntry? {
         city.entries.first { $0.id == selectedEntryID } ?? city.entries.first
+    }
+
+    private var memoryRail: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 10) {
+                Rectangle()
+                    .fill(BubuTheme.Text.tertiary.opacity(0.55))
+                    .frame(width: 36, height: 0.5)
+
+                Text("记忆长廊")
+                    .font(.system(size: 13, weight: .medium, design: .rounded))
+                    .foregroundStyle(BubuTheme.Text.tertiary)
+
+                Rectangle()
+                    .fill(BubuTheme.Text.tertiary.opacity(0.55))
+                    .frame(width: 36, height: 0.5)
+            }
+            .frame(maxWidth: .infinity)
+
+            GeometryReader { geometry in
+                ScrollViewReader { proxy in
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(alignment: .top, spacing: 6) {
+                            Color.clear
+                                .frame(width: max((geometry.size.width - 60) / 2, 20))
+
+                            ForEach(city.entries) { entry in
+                                Button {
+                                    withAnimation(.spring(response: 0.38, dampingFraction: 0.86)) {
+                                        selectedEntryID = entry.id
+                                    }
+                                } label: {
+                                    CityGalleryRailItem(
+                                        entry: entry,
+                                        isSelected: selectedEntry?.id == entry.id
+                                    )
+                                }
+                                .buttonStyle(.plain)
+                                .id(entry.id)
+                            }
+
+                            Color.clear
+                                .frame(width: max((geometry.size.width - 60) / 2, 20))
+                        }
+                        .scrollTargetLayout()
+                        .padding(.top, 12)
+                        .padding(.bottom, 8)
+                    }
+                    .scrollTargetBehavior(.viewAligned)
+                    .scrollPosition(id: $railScrollID, anchor: .center)
+                    .onAppear {
+                        if let firstID = city.entries.first?.id {
+                            selectedEntryID = firstID
+                            railScrollID = firstID
+                            DispatchQueue.main.async {
+                                proxy.scrollTo(firstID, anchor: .center)
+                            }
+                        }
+                    }
+                    .onChange(of: selectedEntryID) { _, newID in
+                        guard let newID else { return }
+                        railScrollID = newID
+                        withAnimation(.spring(response: 0.38, dampingFraction: 0.86)) {
+                            proxy.scrollTo(newID, anchor: .center)
+                        }
+                    }
+                    .onChange(of: railScrollID) { _, newID in
+                        guard let newID, newID != selectedEntryID else { return }
+                        withAnimation(.spring(response: 0.38, dampingFraction: 0.86)) {
+                            selectedEntryID = newID
+                        }
+                    }
+                }
+            }
+            .frame(height: 132)
+        }
     }
 
     private var galleryCanvas: some View {
@@ -916,6 +1571,21 @@ private struct CityGalleryView: View {
                                 }
                                 .buttonStyle(.plain)
                             }
+
+                            if entry.originalPhotoMissing {
+                                Button {
+                                    showingRecoveryPicker = true
+                                } label: {
+                                    Label("原图不可用 · 重新上传", systemImage: "arrow.clockwise.circle")
+                                        .font(.system(size: 13, weight: .medium, design: .rounded))
+                                        .foregroundStyle(BubuTheme.Primary.green)
+                                        .padding(.horizontal, 14)
+                                        .frame(height: 36)
+                                        .background(BubuTheme.Primary.green.opacity(0.10))
+                                        .clipShape(Capsule())
+                                }
+                                .buttonStyle(.plain)
+                            }
                         }
 
                         Spacer(minLength: 0)
@@ -931,27 +1601,41 @@ private struct CityGalleryView: View {
                     .padding(.leading, 22)
                     .padding(.top, 28)
                     .padding(.bottom, 26)
-                    .padding(.trailing, 152)
+                    .padding(.trailing, entry.heroImage == nil ? 22 : 164)
 
-                    VStack {
-                        Spacer(minLength: 56)
-                        HStack {
-                            Spacer()
-                            galleryFeatureCard(entry: entry)
+                    if entry.heroImage != nil || recoveryImage != nil {
+                        VStack {
+                            Spacer(minLength: 0)
+                            HStack {
+                                Spacer()
+                                galleryFeatureCard(entry: entry)
+                            }
                         }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+                        .padding(.trailing, 18)
+                        .padding(.bottom, 16)
                     }
-                    .padding(.trailing, 18)
-                    .padding(.bottom, 20)
                 }
             }
         }
-        .frame(height: 510)
+    }
+
+    private func recoverOriginal(from item: PhotosPickerItem) async {
+        guard let entry = selectedEntry,
+              let data = try? await item.loadTransferable(type: Data.self),
+              let image = UIImage(data: data) else { return }
+
+        container.placeRepository.replacePhotos([image], for: entry.userPlace)
+        await MainActor.run {
+            recoveryImage = image
+            recoveryPickerItem = nil
+        }
     }
 
     private func galleryFeatureCard(entry: CityMemoryEntry) -> some View {
         ZStack(alignment: .bottomLeading) {
             Group {
-                if let image = entry.heroImage {
+                if let image = recoveryImage ?? entry.heroImage {
                     Image(uiImage: image)
                         .resizable()
                         .scaledToFill()
@@ -967,7 +1651,7 @@ private struct CityGalleryView: View {
                     )
                 }
             }
-            .frame(width: 186, height: 268)
+            .frame(width: galleryCardWidth, height: galleryCardHeight)
             .clipShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: 26, style: .continuous)
@@ -990,6 +1674,14 @@ private struct CityGalleryView: View {
                 .padding(16)
             }
         }
+    }
+
+    private var galleryCardWidth: CGFloat {
+        min(230, UIScreen.main.bounds.width * 0.52)
+    }
+
+    private var galleryCardHeight: CGFloat {
+        galleryCardWidth * (300.0 / 210.0)
     }
 
     private var cityPoem: String {
@@ -1050,37 +1742,79 @@ private struct CityGalleryView: View {
 private struct CityGalleryRailItem: View {
     let entry: CityMemoryEntry
     let isSelected: Bool
-    let fallbackImage: UIImage?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Group {
-                if let image = entry.heroImage ?? fallbackImage {
+        VStack(alignment: .center, spacing: 8) {
+            ZStack {
+                if let image = entry.heroImage {
                     Image(uiImage: image)
                         .resizable()
                         .scaledToFill()
+                } else if let note = entry.note,
+                          !note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    Text(note)
+                        .font(.system(size: 11, weight: .medium, design: .rounded))
+                        .foregroundStyle(BubuTheme.Text.secondary)
+                        .multilineTextAlignment(.center)
+                        .lineLimit(5)
+                        .padding(7)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .background(BubuTheme.Surface.surface1)
+                } else if entry.hasVoiceMemo {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 18, style: .continuous)
+                            .fill(BubuTheme.Surface.surface1)
+                        Image(systemName: "bubble.left.and.waveform")
+                            .font(.system(size: 22, weight: .medium))
+                            .foregroundStyle(BubuTheme.Primary.green)
+                    }
                 } else {
-                    LinearGradient(
-                        colors: [Color(hex: "637188"), Color(hex: "3E495A")],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
+                    poiRailPlaceholder
                 }
             }
-            .frame(width: 86, height: 62)
-            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .stroke(isSelected ? BubuTheme.Primary.green.opacity(0.8) : .white.opacity(0.08), lineWidth: isSelected ? 2 : 1)
+            .frame(
+                width: isSelected ? 60 : 48,
+                height: isSelected ? 80 : 64
             )
+            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .overlay(railBorder)
+            .frame(width: isSelected ? 60 : 48, height: 80)
+            .shadow(
+                color: entry.status == .visitedGood
+                    ? BubuTheme.Primary.green.opacity(isSelected ? 0.48 : 0.22)
+                    : .clear,
+                radius: isSelected ? 12 : 6
+            )
+            .animation(.easeInOut(duration: 0.28), value: isSelected)
 
             Text(entry.placeName)
                 .font(.system(size: 12, weight: .medium, design: .rounded))
                 .foregroundStyle(isSelected ? BubuTheme.Text.ink : BubuTheme.Text.secondary)
                 .lineLimit(2)
+                .multilineTextAlignment(.center)
         }
-        .frame(width: 86, alignment: .leading)
+        .frame(width: isSelected ? 60 : 48, alignment: .center)
+        .opacity(isSelected ? 1 : 0.6)
+        .animation(.easeInOut(duration: 0.28), value: isSelected)
     }
+
+    private var poiRailPlaceholder: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(BubuTheme.Surface.surface1)
+            Image(systemName: "mappin.and.ellipse")
+                .font(.system(size: 20, weight: .medium))
+                .foregroundStyle(BubuTheme.Text.tertiary)
+        }
+    }
+
+    private var railBorder: some View {
+        RoundedRectangle(cornerRadius: 16, style: .continuous)
+            .stroke(BubuTheme.Primary.green, lineWidth: 2)
+            .shadow(color: BubuTheme.Primary.green.opacity(0.58), radius: 10)
+            .opacity(isSelected ? 1 : 0)
+    }
+
 }
 
 private struct CityStampMotif: View {
@@ -1368,6 +2102,7 @@ private struct CityMemorySummary: Identifiable {
 }
 
 private struct CityMemoryEntry: Identifiable {
+    let userPlace: CDUserPlace
     let id: UUID
     let cityName: String
     let placeName: String
@@ -1376,12 +2111,15 @@ private struct CityMemoryEntry: Identifiable {
     let status: PlaceStatus
     let mood: MoodTag?
     let coordinate: CLLocationCoordinate2D
+    let coverImageURL: URL?
     let heroImage: UIImage?
+    let originalPhotoMissing: Bool
     let hasVoiceMemo: Bool
     let voiceMemoURL: URL?
     let voiceDuration: TimeInterval?
 
     init(userPlace: CDUserPlace) {
+        self.userPlace = userPlace
         id = userPlace.id ?? UUID()
         cityName = CityMemorySummary.inferredCity(from: userPlace)
         placeName = userPlace.place?.name ?? "未命名地点"
@@ -1393,17 +2131,20 @@ private struct CityMemoryEntry: Identifiable {
             latitude: userPlace.place?.latitude ?? 0,
             longitude: userPlace.place?.longitude ?? 0
         )
+        coverImageURL = userPlace.place?.coverImageURL
         let sortedMedia = (userPlace.media ?? []).sorted {
             if let lhs = $0.createdAt, let rhs = $1.createdAt, lhs != rhs {
                 return lhs > rhs
             }
             return $0.sortOrder < $1.sortOrder
         }
-        heroImage = sortedMedia.first(where: { $0.typeValue == MediaType.photo.rawValue }).flatMap { media in
-            if let data = media.thumbnailData { return UIImage(data: data) }
-            if let url = media.localFileURL, let data = try? Data(contentsOf: url) { return UIImage(data: data) }
-            return nil
+        let photoMedia = sortedMedia.first(where: { $0.typeValue == MediaType.photo.rawValue })
+        heroImage = photoMedia.flatMap { media in
+            guard let url = media.localFileURL,
+                  let data = try? Data(contentsOf: url) else { return nil }
+            return UIImage(data: data)
         }
+        originalPhotoMissing = photoMedia != nil && heroImage == nil
         let voiceMedia = sortedMedia.first(where: { $0.typeValue == MediaType.voiceNote.rawValue })
         voiceMemoURL = voiceMedia?.localFileURL
         voiceDuration = voiceMemoURL.flatMap { url in
@@ -1419,6 +2160,7 @@ private struct CityMemoryEntry: Identifiable {
         let seconds = max(1, Int(round(voiceDuration)))
         return "\(seconds)秒"
     }
+
 }
 
 private enum ProfileAssetStore {

@@ -32,6 +32,7 @@ final class AppState: ObservableObject {
         }
     }
     @Published var selectedTab: AppTab = .explore
+    @Published var hidesFloatingTabBar = false
     /// 地图刷新触发器：添加面板保存地点后 +1
     @Published var mapRefreshTrigger: Int = 0
     @Published var focusPlaceID: UUID?
@@ -114,12 +115,14 @@ struct MainTabView: View {
                 }
             }
 
-            VStack {
-                Spacer()
-                FloatingTabBar(selectedTab: $appState.selectedTab) {
-                    pendingImportPreview = nil
-                    pendingMatchedPlace = nil
-                    showingAddSearch = true
+            if !appState.hidesFloatingTabBar {
+                VStack {
+                    Spacer()
+                    FloatingTabBar(selectedTab: $appState.selectedTab) {
+                        pendingImportPreview = nil
+                        pendingMatchedPlace = nil
+                        showingAddSearch = true
+                    }
                 }
             }
 
@@ -282,7 +285,8 @@ struct MainTabView: View {
             status: .wantToGo,
             folder: folder,
             sourceType: card.preview.sourceType,
-            sourceURL: card.preview.sourceURL
+            sourceURL: card.preview.sourceURL,
+            coverImageURL: place.coverImageURL
         )
         appState.mapRefreshTrigger += 1
         dismissClipboardCard(card.preview)
@@ -707,7 +711,8 @@ struct AddPlaceSearchSheet: View {
             status: resolvedStatus,
             folder: folder,
             sourceType: sourceType,
-            sourceURL: sourceURL
+            sourceURL: sourceURL,
+            coverImageURL: mapPlace.coverImageURL
         )
         if resolvedStatus != .wantToGo {
             let checkIn = container.placeRepository.checkIn(
