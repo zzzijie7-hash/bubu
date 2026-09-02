@@ -17,7 +17,9 @@ struct ExploreMapView: View {
     @State private var showingAddressPicker = false
     @State private var savedAddresses = SavedAddress.load()
     @State private var addressSearchHistory: [String] = SavedAddress.loadSearchHistory()
-    @State private var currentZoomLevel: Double = 1000
+    @State private var currentZoomStepIndex = 4
+    @State private var currentClusterMode: ExploreClusterMode = .individual
+    @State private var displayedMarkers: [ExploreMarkerItem] = []
     @EnvironmentObject var appState: AppState
 
     var body: some View {
@@ -48,24 +50,51 @@ struct ExploreMapView: View {
                 }
 
                 // 用户标记
-                ForEach(allUserPlaces, id: \.id) { up in
-                    let p = up.place
-                    let coord = CLLocationCoordinate2D(latitude: p?.latitude ?? 0, longitude: p?.longitude ?? 0)
-                    let status = PlaceStatus(rawValue: up.statusValue) ?? .wantToGo
-                    Annotation("", coordinate: coord) {
-                        UserPlaceMarker(
-                            status: status,
-                            color: BubuTheme.mapMarkerColor(for: status),
-                            name: p?.name ?? "",
-                            photoData: markerPhotoData(for: up)
-                        )
+                ForEach(displayedMarkers) { item in
+                    switch item {
+                    case .place(let up):
+                        let p = up.place
+                        let coord = CLLocationCoordinate2D(latitude: p?.latitude ?? 0, longitude: p?.longitude ?? 0)
+                        let status = PlaceStatus(rawValue: up.statusValue) ?? .wantToGo
+                        Annotation("", coordinate: coord) {
+                            UserPlaceMarker(
+                                status: status,
+                                color: BubuTheme.mapMarkerColor(for: status),
+                                name: p?.name ?? "",
+                                photoData: markerPhotoData(for: up)
+                            )
+                        }
+                        .tag("user_\(p?.id?.uuidString ?? "")")
+
+                    case .cluster(let cluster):
+                        Annotation("", coordinate: cluster.coordinate) {
+                            ClusterMarkerView(cluster: cluster)
+                                .onTapGesture {
+                                    zoomTo(
+                                        center: cluster.coordinate,
+                                        meters: zoomSteps[max(0, currentZoomStepIndex - 2)]
+                                    )
+                                }
+                        }
                     }
-                    .tag("user_\(p?.id?.uuidString ?? "")")
                 }
             }
-            .mapStyle(.standard(elevation: .flat, pointsOfInterest: .excludingAll))
+            .mapStyle(
+                .standard(
+                    elevation: .flat,
+                    emphasis: .muted,
+                    pointsOfInterest: .excludingAll,
+                    showsTraffic: false
+                )
+            )
             .mapControls { MapCompass() }
             .environment(\.locale, Locale(identifier: "zh_CN"))
+            .onMapCameraChange(frequency: .onEnd) { context in
+                let meters = max(120, approximateVisibleMeters(for: context.region))
+                currentZoomStepIndex = nearestZoomStepIndex(to: meters)
+                appState.mapSearchCenter = context.region.center
+                updateDisplayedMarkers(for: meters)
+            }
             .onChange(of: selectedAnnotationID) { _, tagID in
                 guard let tagID, tagID.hasPrefix("user_") else { return }
                 let id = String(tagID.dropFirst(5))
@@ -131,6 +160,7 @@ struct ExploreMapView: View {
 
                 Spacer()
             }
+            .zIndex(3)
         }
         .onAppear {
             container.locationManager.requestPermission()
@@ -187,19 +217,27 @@ struct ExploreMapView: View {
         }
     }
 
-    private func zoomIn() { currentZoomLevel = max(100, currentZoomLevel / 2); zoomToCurrent() }
-    private func zoomOut() { currentZoomLevel = min(50000, currentZoomLevel * 2); zoomToCurrent() }
+    private func zoomIn() {
+        currentZoomStepIndex = max(0, currentZoomStepIndex - 1)
+        zoomToCurrent()
+    }
+
+    private func zoomOut() {
+        currentZoomStepIndex = min(zoomSteps.count - 1, currentZoomStepIndex + 1)
+        zoomToCurrent()
+    }
 
     private func zoomToCurrent() {
         let center = appState.mapSearchCenter
             ?? container.locationManager.currentLocation?.coordinate
             ?? CLLocationCoordinate2D(latitude: 31.215070, longitude: 121.474434)
-        zoomTo(center: center, meters: currentZoomLevel)
+        zoomTo(center: center, meters: zoomSteps[currentZoomStepIndex])
     }
 
     private func zoomTo(center: CLLocationCoordinate2D, meters: Double) {
-        currentZoomLevel = meters
+        currentZoomStepIndex = nearestZoomStepIndex(to: meters)
         appState.mapSearchCenter = center
+        updateDisplayedMarkers(for: meters)
         withAnimation(.easeInOut(duration: 0.3)) {
             camera = .region(MKCoordinateRegion(center: center, latitudinalMeters: meters, longitudinalMeters: meters))
         }
@@ -215,7 +253,10 @@ struct ExploreMapView: View {
         }
     }
 
-    private func reloadUserPlaces() { allUserPlaces = container.placeRepository.fetchUserPlaces() }
+    private func reloadUserPlaces() {
+        allUserPlaces = container.placeRepository.fetchUserPlaces()
+        updateDisplayedMarkers(for: zoomSteps[currentZoomStepIndex])
+    }
 
     private func focusIfNeeded() {
         guard let focusPlaceID = appState.focusPlaceID else { return }
@@ -244,6 +285,174 @@ struct ExploreMapView: View {
 
         return media.first?.thumbnailData
     }
+
+    private func clusteredMarkers(from userPlaces: [CDUserPlace], mode: ExploreClusterMode) -> [ExploreMarkerItem] {
+        guard mode != .individual else {
+            return userPlaces.map(ExploreMarkerItem.place)
+        }
+
+        let cellSize = clusterCellSize(for: mode)
+        var buckets: [ClusterBucketKey: [CDUserPlace]] = [:]
+
+        for userPlace in userPlaces {
+            guard let place = userPlace.place else { continue }
+            let coordinate = CLLocationCoordinate2D(latitude: place.latitude, longitude: place.longitude)
+            let key = ClusterBucketKey(
+                coordinate: coordinate,
+                cellSizeMeters: cellSize
+            )
+            buckets[key, default: []].append(userPlace)
+        }
+
+        return buckets.map { key, places in
+            if places.count == 1, let only = places.first {
+                return .place(only)
+            }
+            return .cluster(makeCluster(from: places, key: key))
+        }
+        .sorted(by: markerSort(lhs:rhs:))
+    }
+
+    private func clusterCellSize(for mode: ExploreClusterMode) -> Double {
+        switch mode {
+        case .individual:
+            return 180
+        case .neighborhood:
+            return 360
+        case .district:
+            return 820
+        case .city:
+            return 1_600
+        }
+    }
+
+    private func updateDisplayedMarkers(for zoomLevel: Double) {
+        let nextMode = ExploreClusterMode(zoomLevel: zoomLevel)
+        currentClusterMode = nextMode
+        displayedMarkers = clusteredMarkers(from: allUserPlaces, mode: nextMode)
+    }
+
+    private func makeCluster(from userPlaces: [CDUserPlace], key: ClusterBucketKey) -> MapCluster {
+        let coordinates = userPlaces.compactMap { userPlace -> CLLocationCoordinate2D? in
+            guard let place = userPlace.place else { return nil }
+            return CLLocationCoordinate2D(latitude: place.latitude, longitude: place.longitude)
+        }
+
+        let latitude = coordinates.map(\.latitude).reduce(0, +) / Double(max(coordinates.count, 1))
+        let longitude = coordinates.map(\.longitude).reduce(0, +) / Double(max(coordinates.count, 1))
+        let statuses = userPlaces.map { PlaceStatus(rawValue: $0.statusValue) ?? .wantToGo }
+
+        return MapCluster(
+            id: "cluster_\(key.latIndex)_\(key.lonIndex)_\(userPlaces.count)",
+            coordinate: CLLocationCoordinate2D(latitude: latitude, longitude: longitude),
+            count: userPlaces.count,
+            status: dominantStatus(in: statuses),
+            hasPhoto: userPlaces.contains { markerPhotoData(for: $0) != nil }
+        )
+    }
+
+    private func dominantStatus(in statuses: [PlaceStatus]) -> PlaceStatus {
+        let priority: [PlaceStatus: Int] = [
+            .visitedGood: 4,
+            .visitedNeutral: 3,
+            .visitedBad: 2,
+            .wantToGo: 1
+        ]
+
+        let grouped = Dictionary(grouping: statuses, by: { $0 })
+        return grouped.max { lhs, rhs in
+            if lhs.value.count == rhs.value.count {
+                return priority[lhs.key, default: 0] < priority[rhs.key, default: 0]
+            }
+            return lhs.value.count < rhs.value.count
+        }?.key ?? .wantToGo
+    }
+
+    private func markerSort(lhs: ExploreMarkerItem, rhs: ExploreMarkerItem) -> Bool {
+        switch (lhs, rhs) {
+        case (.cluster(let left), .cluster(let right)):
+            return left.count > right.count
+        case (.cluster, .place):
+            return true
+        case (.place, .cluster):
+            return false
+        case (.place(let left), .place(let right)):
+            return (left.place?.name ?? "") < (right.place?.name ?? "")
+        }
+    }
+
+    private func approximateVisibleMeters(for region: MKCoordinateRegion) -> Double {
+        let top = CLLocation(latitude: region.center.latitude + region.span.latitudeDelta / 2, longitude: region.center.longitude)
+        let bottom = CLLocation(latitude: region.center.latitude - region.span.latitudeDelta / 2, longitude: region.center.longitude)
+        let meters = top.distance(from: bottom)
+        return max(120, meters)
+    }
+
+    // Button zoom uses stable stops. Pinch gestures are snapped to the nearest stop
+    // once they end, so later taps never inherit an arbitrary MapKit camera value.
+    private let zoomSteps: [Double] = [
+        160, 280, 500, 850, 1_400, 2_400, 4_200, 7_500, 13_000, 23_000, 40_000
+    ]
+
+    private func nearestZoomStepIndex(to meters: Double) -> Int {
+        zoomSteps.indices.min { lhs, rhs in
+            abs(zoomSteps[lhs] - meters) < abs(zoomSteps[rhs] - meters)
+        } ?? 0
+    }
+}
+
+private enum ExploreClusterMode: Equatable {
+    case individual
+    case neighborhood
+    case district
+    case city
+
+    init(zoomLevel: Double) {
+        switch zoomLevel {
+        case ..<1_700:
+            self = .individual
+        case ..<6_000:
+            self = .neighborhood
+        case ..<18_000:
+            self = .district
+        default:
+            self = .city
+        }
+    }
+}
+
+private enum ExploreMarkerItem: Identifiable {
+    case place(CDUserPlace)
+    case cluster(MapCluster)
+
+    var id: String {
+        switch self {
+        case .place(let userPlace):
+            return "place_\(userPlace.id?.uuidString ?? UUID().uuidString)"
+        case .cluster(let cluster):
+            return cluster.id
+        }
+    }
+}
+
+private struct MapCluster: Identifiable {
+    let id: String
+    let coordinate: CLLocationCoordinate2D
+    let count: Int
+    let status: PlaceStatus
+    let hasPhoto: Bool
+}
+
+private struct ClusterBucketKey: Hashable {
+    let latIndex: Int
+    let lonIndex: Int
+
+    init(coordinate: CLLocationCoordinate2D, cellSizeMeters: Double) {
+        let latMeters = 111_000.0
+        let lonMeters = max(25_000.0, cos(coordinate.latitude * .pi / 180) * 111_000.0)
+        latIndex = Int(floor((coordinate.latitude * latMeters) / cellSizeMeters))
+        lonIndex = Int(floor((coordinate.longitude * lonMeters) / cellSizeMeters))
+    }
 }
 
 // MARK: - 用户地点标记
@@ -271,30 +480,43 @@ struct UserPlaceMarker: View {
 
                     Triangle()
                         .fill(.white)
-                        .frame(width: 16, height: 12)
-                        .offset(y: -2)
+                        .frame(width: 14, height: 10)
+                        .offset(y: -1)
                         .shadow(color: .black.opacity(0.1), radius: 3, y: 1)
 
-                    ZStack {
-                        Circle()
-                            .fill(color.opacity(0.2))
-                            .frame(width: 24, height: 24)
-                        Image(systemName: statusIcon)
-                            .font(.system(size: status == .visitedNeutral ? 10 : 11, weight: .bold))
-                            .foregroundStyle(color)
-                    }
-                    .offset(y: -3)
+                    markerBadge
+                    .padding(.top, 4)
                 }
             } else {
-                ZStack {
-                    Circle()
-                        .fill(color.opacity(0.2))
-                        .frame(width: 24, height: 24)
-                    Image(systemName: statusIcon)
-                        .font(.system(size: status == .visitedNeutral ? 10 : 11, weight: .bold))
-                        .foregroundStyle(color)
-                }
+                markerBadge
             }
+        }
+    }
+
+    private var markerBadge: some View {
+        ZStack {
+            Circle()
+                .fill(outerGlowColor)
+                .frame(width: outerGlowSize, height: outerGlowSize)
+                .blur(radius: outerGlowBlur)
+
+            if status == .visitedGood {
+                Circle()
+                    .stroke(BubuTheme.Primary.green.opacity(0.34), lineWidth: 1.1)
+                    .frame(width: 30, height: 30)
+            }
+
+            Circle()
+                .fill(coreFillColor)
+                .frame(width: 24, height: 24)
+
+            Circle()
+                .stroke(coreStrokeColor, lineWidth: coreStrokeWidth)
+                .frame(width: 24, height: 24)
+
+            Image(systemName: statusIcon)
+                .font(.system(size: status == .visitedNeutral ? 10 : 11, weight: .bold))
+                .foregroundStyle(iconColor)
         }
     }
 
@@ -306,38 +528,185 @@ struct UserPlaceMarker: View {
         case .visitedNeutral: return "checkmark"
         }
     }
+
+    private var outerGlowColor: Color {
+        switch status {
+        case .wantToGo:
+            return BubuTheme.Text.tertiary.opacity(0.18)
+        case .visitedGood:
+            return BubuTheme.Primary.green.opacity(0.42)
+        case .visitedBad:
+            return Color.white.opacity(0.14)
+        case .visitedNeutral:
+            return BubuTheme.Primary.green.opacity(0.24)
+        }
+    }
+
+    private var outerGlowSize: CGFloat {
+        switch status {
+        case .wantToGo: return 30
+        case .visitedGood: return 40
+        case .visitedBad: return 30
+        case .visitedNeutral: return 34
+        }
+    }
+
+    private var outerGlowBlur: CGFloat {
+        switch status {
+        case .wantToGo: return 9
+        case .visitedGood: return 14
+        case .visitedBad: return 8
+        case .visitedNeutral: return 10
+        }
+    }
+
+    private var coreFillColor: Color {
+        switch status {
+        case .wantToGo:
+            return BubuTheme.Surface.surface3.opacity(0.88)
+        case .visitedGood:
+            return BubuTheme.Primary.green.opacity(0.22)
+        case .visitedBad:
+            return Color(hex: "677089").opacity(0.92)
+        case .visitedNeutral:
+            return BubuTheme.Primary.green.opacity(0.12)
+        }
+    }
+
+    private var coreStrokeColor: Color {
+        switch status {
+        case .wantToGo:
+            return BubuTheme.Text.tertiary.opacity(0.52)
+        case .visitedGood:
+            return BubuTheme.Primary.green.opacity(0.74)
+        case .visitedBad:
+            return Color.white.opacity(0.24)
+        case .visitedNeutral:
+            return BubuTheme.Primary.green.opacity(0.52)
+        }
+    }
+
+    private var coreStrokeWidth: CGFloat {
+        switch status {
+        case .visitedGood: return 1.4
+        case .visitedBad: return 1.2
+        case .wantToGo, .visitedNeutral: return 1
+        }
+    }
+
+    private var iconColor: Color {
+        switch status {
+        case .wantToGo:
+            return BubuTheme.Text.secondary.opacity(0.92)
+        case .visitedGood:
+            return BubuTheme.Primary.green
+        case .visitedBad:
+            return Color.white.opacity(0.86)
+        case .visitedNeutral:
+            return BubuTheme.Primary.green.opacity(0.92)
+        }
+    }
+}
+
+private struct ClusterMarkerView: View {
+    let cluster: MapCluster
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .fill(glowColor.opacity(glowOpacity))
+                .frame(width: glowSize, height: glowSize)
+                .blur(radius: cluster.status == .visitedGood ? 14 : 10)
+
+            Circle()
+                .fill(BubuTheme.Surface.surface1.opacity(0.92))
+                .frame(width: 38, height: 38)
+
+            Circle()
+                .stroke(borderColor, lineWidth: 1.2)
+                .frame(width: 38, height: 38)
+
+            HStack(spacing: 4) {
+                Image(systemName: iconName)
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(iconColor)
+
+                Text(cluster.count > 99 ? "99+" : "\(cluster.count)")
+                    .font(.system(size: 11, weight: .semibold, design: .rounded))
+                    .foregroundStyle(BubuTheme.Text.ink)
+            }
+        }
+        .shadow(color: .black.opacity(0.22), radius: 10, y: 4)
+    }
+
+    private var iconName: String {
+        switch cluster.status {
+        case .wantToGo: return "bookmark.fill"
+        case .visitedGood: return "hand.thumbsup.fill"
+        case .visitedBad: return "hand.thumbsdown.fill"
+        case .visitedNeutral: return "checkmark"
+        }
+    }
+
+    private var iconColor: Color {
+        switch cluster.status {
+        case .wantToGo:
+            return BubuTheme.Text.secondary
+        case .visitedGood, .visitedNeutral:
+            return BubuTheme.Primary.green
+        case .visitedBad:
+            return BubuTheme.Text.ink.opacity(0.9)
+        }
+    }
+
+    private var borderColor: Color {
+        switch cluster.status {
+        case .wantToGo:
+            return BubuTheme.Text.tertiary.opacity(0.42)
+        case .visitedGood:
+            return BubuTheme.Primary.green.opacity(0.7)
+        case .visitedBad:
+            return Color.white.opacity(0.22)
+        case .visitedNeutral:
+            return BubuTheme.Primary.green.opacity(0.46)
+        }
+    }
+
+    private var glowColor: Color {
+        switch cluster.status {
+        case .wantToGo:
+            return BubuTheme.Text.tertiary
+        case .visitedGood, .visitedNeutral:
+            return BubuTheme.Primary.green
+        case .visitedBad:
+            return Color.white
+        }
+    }
+
+    private var glowOpacity: Double {
+        switch cluster.status {
+        case .wantToGo: return 0.16
+        case .visitedGood: return 0.3
+        case .visitedBad: return 0.12
+        case .visitedNeutral: return 0.2
+        }
+    }
+
+    private var glowSize: CGFloat {
+        switch cluster.status {
+        case .visitedGood: return 56
+        case .visitedNeutral: return 48
+        case .wantToGo, .visitedBad: return 42
+        }
+    }
 }
 
 struct Triangle: Shape {
     func path(in rect: CGRect) -> Path {
         var path = Path()
-        let tip = CGPoint(x: rect.midX, y: rect.maxY)
-        let leftTop = CGPoint(x: rect.minX + rect.width * 0.18, y: rect.minY + rect.height * 0.08)
-        let rightTop = CGPoint(x: rect.maxX - rect.width * 0.18, y: rect.minY + rect.height * 0.08)
-        let leftShoulder = CGPoint(x: rect.midX - rect.width * 0.16, y: rect.maxY - rect.height * 0.34)
-        let rightShoulder = CGPoint(x: rect.midX + rect.width * 0.16, y: rect.maxY - rect.height * 0.34)
-
-        path.move(to: leftTop)
-        path.addQuadCurve(
-            to: rightTop,
-            control: CGPoint(x: rect.midX, y: rect.minY - rect.height * 0.12)
-        )
-        path.addQuadCurve(
-            to: rightShoulder,
-            control: CGPoint(x: rect.maxX + rect.width * 0.04, y: rect.maxY * 0.42)
-        )
-        path.addQuadCurve(
-            to: tip,
-            control: CGPoint(x: rect.midX + rect.width * 0.08, y: rect.maxY - rect.height * 0.06)
-        )
-        path.addQuadCurve(
-            to: leftShoulder,
-            control: CGPoint(x: rect.midX - rect.width * 0.08, y: rect.maxY - rect.height * 0.06)
-        )
-        path.addQuadCurve(
-            to: leftTop,
-            control: CGPoint(x: rect.minX - rect.width * 0.04, y: rect.maxY * 0.42)
-        )
+        path.move(to: CGPoint(x: rect.midX, y: rect.maxY))
+        path.addLine(to: CGPoint(x: rect.minX, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
         path.closeSubpath()
         return path
     }
